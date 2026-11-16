@@ -18,7 +18,8 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install -y aapt apksigner zipalign dalvik-exchange binutils-mingw-w64-x86-64
-          ls "$ANDROID_HOME/platforms"
+          yes | "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" "platforms;android-34" >/dev/null
+          echo "ANDROID_JAR=$ANDROID_HOME/platforms/android-34/android.jar" >> "$GITHUB_ENV"
       - name: Build
         run: ./build.sh
       - uses: actions/upload-artifact@v4

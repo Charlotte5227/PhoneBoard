@@ -7,7 +7,10 @@ cd "$(dirname "$0")"
 # 優先順: $ANDROID_JAR → $ANDROID_HOME/platforms の最新
 PLAT=${ANDROID_JAR:-}
 if [ -z "$PLAT" ] && [ -n "$ANDROID_HOME" ]; then
-  PLAT=$(ls -d "$ANDROID_HOME"/platforms/android-3[0-9]/android.jar 2>/dev/null | sort -V | tail -1)
+  # aapt(v1) は新しすぎる形式を読めないので 34→30 の順で探す
+  for v in 34 33 32 31 30; do
+    if [ -f "$ANDROID_HOME/platforms/android-$v/android.jar" ]; then PLAT="$ANDROID_HOME/platforms/android-$v/android.jar"; break; fi
+  done
 fi
 if [ -z "$PLAT" ] || [ ! -f "$PLAT" ]; then
   echo "android.jar (API 30以上) が見つかりません。ANDROID_JAR か ANDROID_HOME を設定してください" >&2; exit 1
