@@ -27,6 +27,11 @@ type MouseCfg struct {
 
 type KeyboardCfg struct {
 	Input            string  `json:"input"`            // gboard: スマホのキーボードをそのまま使う / flick: PhoneBoardのフリック
+	Mirror           bool    `json:"mirror"`           // gboard: スマホのキーボード画面をPCに映す
+	MirrorFps        int     `json:"mirrorFps"`        //
+	MirrorWidth      int     `json:"mirrorWidth"`      // 送る画像の横幅(px)
+	MirrorQuality    int     `json:"mirrorQuality"`    // JPEG品質
+	MirrorScale      float64 `json:"mirrorScale"`      // PC画面での表示幅(倍率、キーボード表示の幅に対して)
 	Style            string  `json:"style"`            // simple: なぞって離すと入力 / dwell: 止めて確定待機 / flick: 普通のフリック
 	FlickSpeed       float64 `json:"flickSpeed"`       // simple: これより速い動きをフリックとみなす(dp/ms)
 	Explore          bool    `json:"explore"`          // 探り操作（なぞって位置を探し、止めて確定待機）
@@ -75,7 +80,7 @@ type ButtonCfg struct {
 }
 
 // configSchema は設定形式の版。上げると古い既定値を新しい既定値に置き換える。
-const configSchema = 3
+const configSchema = 4
 
 type Config struct {
 	Schema      int         `json:"schema"`
@@ -104,7 +109,8 @@ func DefaultConfig() *Config {
 			RightClickOneShot: true,
 		},
 		Keyboard: KeyboardCfg{
-			Input: "gboard", Style: "simple", FlickSpeed: 0.25,
+			Input: "gboard", Mirror: true, MirrorFps: 15, MirrorWidth: 540, MirrorQuality: 60, MirrorScale: 1.6,
+			Style: "simple", FlickSpeed: 0.25,
 			Explore: true, DwellMs: 260, QuickMs: 300, FlickDp: 20, StillDp: 7, RearmDp: 90,
 			RepeatDelayMs: 450, RepeatIntervalMs: 70, KanaOutput: "ime", ImeControl: true,
 		},
@@ -150,6 +156,18 @@ func (c *Config) Normalize() {
 	k := &c.Keyboard
 	if k.Input != "flick" {
 		k.Input = "gboard"
+	}
+	if k.MirrorFps < 2 || k.MirrorFps > 30 {
+		k.MirrorFps = d.Keyboard.MirrorFps
+	}
+	if k.MirrorWidth < 240 || k.MirrorWidth > 1440 {
+		k.MirrorWidth = d.Keyboard.MirrorWidth
+	}
+	if k.MirrorQuality < 20 || k.MirrorQuality > 95 {
+		k.MirrorQuality = d.Keyboard.MirrorQuality
+	}
+	if k.MirrorScale < 0.5 || k.MirrorScale > 5 {
+		k.MirrorScale = d.Keyboard.MirrorScale
 	}
 	if k.Style != "dwell" && k.Style != "flick" {
 		k.Style = "simple"
@@ -273,6 +291,11 @@ func LoadConfig() *Config {
 	if c.Schema < 3 {
 		// v2 → v3: スマホのキーボード(Gboard)入力を既定に
 		c.Keyboard.Input = "gboard"
+	}
+	if c.Schema < 4 {
+		d := DefaultConfig().Keyboard
+		c.Keyboard.Mirror = true
+		c.Keyboard.MirrorFps, c.Keyboard.MirrorWidth, c.Keyboard.MirrorQuality, c.Keyboard.MirrorScale = d.MirrorFps, d.MirrorWidth, d.MirrorQuality, d.MirrorScale
 	}
 	c.Schema = configSchema
 	c.Normalize()

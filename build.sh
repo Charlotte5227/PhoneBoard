@@ -1,7 +1,7 @@
 #!/bin/sh
 # PhoneBoard 一括ビルド（Linux）: dist/PhoneBoard.exe と dist/PhoneBoard.apk を作る
-#   必要: Go 1.22+, binutils-mingw-w64-x86-64(任意: exeアイコン用),
-#         android-sdk-platform-23 aapt apksigner zipalign dalvik-exchange, JDK
+#   必要: Go 1.22+, Android SDK の android.jar (API 30以上: ANDROID_HOME か ANDROID_JAR),, binutils-mingw-w64-x86-64(任意: exeアイコン用),
+#         aapt apksigner zipalign dalvik-exchange, JDK
 set -e
 cd "$(dirname "$0")"
 mkdir -p dist

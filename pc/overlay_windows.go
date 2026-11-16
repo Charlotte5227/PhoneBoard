@@ -61,6 +61,9 @@ var (
 	pSetBkMode              = gdi32.NewProc("SetBkMode")
 	pSetTextColor           = gdi32.NewProc("SetTextColor")
 	pCreateFontW            = gdi32.NewProc("CreateFontW")
+	pStretchDIBits          = gdi32.NewProc("StretchDIBits")
+	pSetStretchBltMode      = gdi32.NewProc("SetStretchBltMode")
+	pSetBrushOrgEx          = gdi32.NewProc("SetBrushOrgEx")
 )
 
 const (
@@ -140,6 +143,21 @@ type paintStruct struct {
 	FRestore    int32
 	FIncUpdate  int32
 	RgbReserved [32]byte
+}
+
+type bitmapInfoHeader struct {
+	BiSize          uint32
+	BiWidth         int32
+	BiHeight        int32
+	BiPlanes        uint16
+	BiBitCount      uint16
+	BiCompression   uint32
+	BiSizeImage     uint32
+	BiXPelsPerMeter int32
+	BiYPelsPerMeter int32
+	BiClrUsed       uint32
+	BiClrImportant  uint32
+	_               [4]byte // RGBQUAD[1]
 }
 
 type monitorInfo struct {
@@ -431,6 +449,21 @@ func (u *ui) tick() {
 			w = int32(360 * scale)
 		}
 		h := int32(104 * scale)
+		if f := d.Frame; f != nil && now.Sub(f.At) < 1500*time.Millisecond && f.W > 0 {
+			// キーボード画面の映像あり
+			ms := d.MirrorScale
+			if ms <= 0 {
+				ms = 1.6
+			}
+			w = int32(float64(c.Width) * ms * scale)
+			ih := int32(float64(w-2*u.px(6)) * float64(f.H) / float64(f.W))
+			maxH := (wa.B - wa.T) * 7 / 10
+			if ih > maxH {
+				ih = maxH
+				w = int32(float64(ih)*float64(f.W)/float64(f.H)) + 2*u.px(6)
+			}
+			h = u.px(50) + ih + u.px(6)
+		}
 		var x, y int32
 		if c.Anchor == "custom" {
 			x, y = placeCustom(c.PosX, c.PosY, wa, w, h)
@@ -656,8 +689,42 @@ var (
 	colDot     = rgb(255, 70, 90)
 )
 
+// paintMirror はスマホのキーボード画面（映像）と変換中の文字を描く。
+func (u *ui) paintMirror(c *canvas, cw, ch int32, f *Frame) {
+	d := &u.data
+	c.round(0, 0, cw, ch, u.px(12), colBg, rgb(70, 70, 90), 1)
+	head := u.px(50)
+	pad := u.px(6)
+	comp := []rune(d.Comp)
+	txt, col, fs := string(comp), colHoverBd, int(u.px(26))
+	if len(comp) > 20 {
+		txt = "…" + string(comp[len(comp)-19:])
+	}
+	if len(comp) == 0 {
+		hist := []rune(d.History)
+		if len(hist) > 30 {
+			hist = hist[len(hist)-30:]
+		}
+		txt, col, fs = string(hist), colSub, int(u.px(16))
+		if time.Since(d.FlashAt) < 900*time.Millisecond && d.Flash != "" {
+			txt, col, fs = "入力 "+d.Flash, colArmBd, int(u.px(20))
+		}
+	}
+	c.text(txt, pad+u.px(8), 0, cw-2*pad-u.px(16), head, fs, col, true, dtLeft)
+	bi := bitmapInfoHeader{BiWidth: int32(f.W), BiHeight: -int32(f.H), BiPlanes: 1, BiBitCount: 32}
+	bi.BiSize = 40
+	pSetStretchBltMode.Call(c.hdc, 4) // HALFTONE（縮小しても文字がつぶれにくい）
+	pSetBrushOrgEx.Call(c.hdc, 0, 0, 0)
+	pStretchDIBits.Call(c.hdc, uintptr(pad), uintptr(head), uintptr(cw-2*pad), uintptr(ch-head-pad),
+		0, 0, uintptr(f.W), uintptr(f.H), uintptr(unsafe.Pointer(&f.BGRA[0])), uintptr(unsafe.Pointer(&bi)), 0, srccopy)
+}
+
 func (u *ui) paintComp(c *canvas, cw, ch int32) {
 	d := &u.data
+	if f := d.Frame; f != nil && time.Since(f.At) < 1500*time.Millisecond && len(f.BGRA) >= f.W*f.H*4 && f.W > 0 {
+		u.paintMirror(c, cw, ch, f)
+		return
+	}
 	c.round(0, 0, cw, ch, u.px(14), colBg, rgb(70, 70, 90), 1)
 	pad := u.px(10)
 	head := u.px(34)

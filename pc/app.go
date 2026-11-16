@@ -1,6 +1,11 @@
 package main
 
 import (
+	"bytes"
+	"encoding/base64"
+	"image"
+	"image/draw"
+	"image/jpeg"
 	"log"
 	"math"
 	"strings"
@@ -42,6 +47,7 @@ type Msg struct {
 	V    int     `json:"v"`
 	Ts   int64   `json:"ts"` // スマホ側のタッチ時刻(ms)
 	Text string  `json:"text"`
+	Jpg  string  `json:"jpg"`
 }
 
 type App struct {
@@ -115,6 +121,10 @@ func (a *App) refreshOverlayLocked() {
 		m.Cfg = a.cfg.Overlay
 		m.KbStyle = a.cfg.Keyboard.Style
 		m.Input = a.cfg.Keyboard.Input
+		m.MirrorScale = a.cfg.Keyboard.MirrorScale
+		if !a.cfg.Keyboard.Mirror {
+			m.Frame = nil
+		}
 		m.KbVisible = a.mode == "keyboard" && a.sess != nil
 		m.Layout = kb
 		m.Aspect = aspect
@@ -381,7 +391,8 @@ func (a *App) sendCfgLocked() {
 			"miniMap": a.cfg.Overlay.MiniMap,
 		},
 		"kb": map[string]any{
-			"input": a.cfg.Keyboard.Input,
+			"input": a.cfg.Keyboard.Input, "mirror": a.cfg.Keyboard.Mirror, "mirrorFps": a.cfg.Keyboard.MirrorFps,
+			"mirrorWidth": a.cfg.Keyboard.MirrorWidth, "mirrorQuality": a.cfg.Keyboard.MirrorQuality,
 			"title": kb.Title, "cols": kb.Cols, "rows": kb.Rows, "keys": keys, "region": a.lay.Region,
 		},
 		"haptic": a.cfg.Haptic.Enabled,
@@ -567,6 +578,40 @@ func (a *App) Handle(s Sender, m *Msg) {
 	}
 }
 
+// Frame はスマホから届いたキーボード画面（BGRA、上から下）。
+type Frame struct {
+	W, H int
+	BGRA []byte
+	At   time.Time
+}
+
+// HandleFrame はキーボード画面のJPEGを展開してPC画面表示用に保持する（Appのロックの外で呼ぶ）。
+func (a *App) HandleFrame(s Sender, m *Msg) {
+	a.mu.Lock()
+	ok := a.sess == s && a.mode == "keyboard" && a.cfg.Keyboard.Mirror
+	a.mu.Unlock()
+	if !ok || m.Jpg == "" {
+		return
+	}
+	raw, err := base64.StdEncoding.DecodeString(m.Jpg)
+	if err != nil {
+		return
+	}
+	img, err := jpeg.Decode(bytes.NewReader(raw))
+	if err != nil {
+		return
+	}
+	b := img.Bounds()
+	rgba := image.NewRGBA(image.Rect(0, 0, b.Dx(), b.Dy()))
+	draw.Draw(rgba, rgba.Bounds(), img, b.Min, draw.Src)
+	px := rgba.Pix
+	for i := 0; i+3 < len(px); i += 4 {
+		px[i], px[i+2] = px[i+2], px[i] // RGBA → BGRA
+	}
+	f := &Frame{W: b.Dx(), H: b.Dy(), BGRA: px, At: time.Now()}
+	a.ov.Update(func(o *OverlayData) { o.Frame = f })
+}
+
 func (a *App) mouseMoveLocked(dx, dy float64) {
 	mc := a.cfg.Mouse
 	sp := math.Hypot(dx, dy)
@@ -712,6 +757,8 @@ type OverlayData struct {
 	KbStyle      string
 	Input        string
 	Comp         string
+	Frame        *Frame // スマホのキーボード画面（最新）
+	MirrorScale  float64
 	KbVisible    bool
 	Layout       KbLayout
 	Aspect       float64

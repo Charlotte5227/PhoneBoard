@@ -7,6 +7,10 @@ import android.graphics.Color;
 import android.graphics.Typeface;
 import android.os.Build;
 import android.os.Bundle;
+import android.content.Intent;
+import android.media.projection.MediaProjectionManager;
+import android.provider.Settings;
+import android.view.WindowInsets;
 import android.os.Vibrator;
 import android.net.wifi.WifiManager;
 import android.text.InputType;
@@ -49,6 +53,17 @@ public class MainActivity extends Activity implements Client.Listener, PadView.H
     private boolean setupByUser;
     private String lastStatus = "";
     private WifiManager.WifiLock wifiLock;
+    private static final int REQ_CAPTURE = 77;
+    private boolean mirrorWanted;      // PC設定: キーボード画面を映す
+    private boolean captureAsked;      // このセッションで許可を求めたか
+    private Button captureButton;
+    private final android.os.Handler ui = new android.os.Handler();
+    private final Runnable imePoll = new Runnable() {
+        public void run() {
+            updateMirrorState();
+            ui.postDelayed(this, 250);
+        }
+    };
 
     @Override
     protected void onCreate(Bundle b) {
@@ -113,12 +128,23 @@ public class MainActivity extends Activity implements Client.Listener, PadView.H
         client.setDevice(Build.MANUFACTURER + " " + Build.MODEL,
                 getResources().getDisplayMetrics().widthPixels / d, getResources().getDisplayMetrics().heightPixels / d);
         client.start();
+        CaptureService.client = client;
+        CaptureService.onStopped = new Runnable() {
+            public void run() {
+                runOnUiThread(new Runnable() {
+                    public void run() { updateCaptureButton(); }
+                });
+            }
+        };
+        ui.post(imePoll);
         showSetup(host.length() == 0);
         if (host.length() == 0) discover();
     }
 
     @Override
     protected void onDestroy() {
+        ui.removeCallbacks(imePoll);
+        stopService(new Intent(this, CaptureService.class));
         client.stop();
         super.onDestroy();
     }
@@ -248,6 +274,27 @@ public class MainActivity extends Activity implements Client.Listener, PadView.H
         lp.topMargin = dp(14);
         ll.addView(dimCheck, lp);
 
+        label(ll, "3. キーボード画面をPCに映す（任意）", 18, true);
+        TextView mh = label(ll, "Gboardの画面をPCに映します。許可の画面では「画面全体」を選んでください。"
+                + "開発者向けオプションの「タップを表示」をオンにすると、指の位置も映ります。", 14, false);
+        mh.setTextColor(Color.rgb(160, 162, 178));
+        captureButton = button(ll, "画面の共有を許可する", new View.OnClickListener() {
+            public void onClick(View v) {
+                if (CaptureService.running) stopService(new Intent(MainActivity.this, CaptureService.class));
+                else requestCapture();
+                ui.postDelayed(new Runnable() { public void run() { updateCaptureButton(); } }, 300);
+            }
+        });
+        button(ll, "「タップを表示」の設定を開く（開発者向けオプション）", new View.OnClickListener() {
+            public void onClick(View v) {
+                try {
+                    startActivity(new Intent(Settings.ACTION_APPLICATION_DEVELOPMENT_SETTINGS));
+                } catch (Exception e) {
+                    statusView.setText("開発者向けオプションが無効です。設定→デバイス情報→ビルド番号を7回タップで有効になります");
+                }
+            }
+        });
+
         backButton = button(ll, "操作画面に戻る", new View.OnClickListener() {
             public void onClick(View v) { showSetup(false); }
         });
@@ -331,6 +378,66 @@ public class MainActivity extends Activity implements Client.Listener, PadView.H
         getWindow().setAttributes(lp);
     }
 
+    private void requestCapture() {
+        captureAsked = true;
+        try {
+            MediaProjectionManager mpm = (MediaProjectionManager) getSystemService(Context.MEDIA_PROJECTION_SERVICE);
+            startActivityForResult(mpm.createScreenCaptureIntent(), REQ_CAPTURE);
+        } catch (Exception ignored) {
+        }
+    }
+
+    @Override
+    protected void onActivityResult(int req, int res, Intent data) {
+        super.onActivityResult(req, res, data);
+        if (req != REQ_CAPTURE) return;
+        if (res == RESULT_OK && data != null) {
+            Intent i = new Intent(this, CaptureService.class);
+            i.putExtra(CaptureService.EXTRA_CODE, res);
+            i.putExtra(CaptureService.EXTRA_DATA, data);
+            if (Build.VERSION.SDK_INT >= 26) startForegroundService(i);
+            else startService(i);
+        }
+        ui.postDelayed(new Runnable() { public void run() { updateCaptureButton(); } }, 500);
+        hideSystemUi();
+    }
+
+    private void updateCaptureButton() {
+        if (captureButton != null) {
+            captureButton.setText(CaptureService.running ? "画面の共有を止める（共有中）" : "画面の共有を許可する");
+        }
+    }
+
+    /** キーボード（IME）の高さを調べて、映す範囲と送信のON/OFFを決める */
+    private void updateMirrorState() {
+        boolean on = mirrorWanted && pad.usesPhoneKeyboard() && client.isConnected() && setup.getVisibility() != View.VISIBLE;
+        if (on) {
+            float top = 0.55f;
+            int imeH = 0;
+            View decor = getWindow().getDecorView();
+            if (Build.VERSION.SDK_INT >= 30) {
+                WindowInsets wi = decor.getRootWindowInsets();
+                if (wi != null) imeH = wi.getInsets(WindowInsets.Type.ime()).bottom;
+            }
+            int full = getResources().getDisplayMetrics().heightPixels;
+            DisplayMetricsHolder.real(this);
+            if (DisplayMetricsHolder.h > 0) full = DisplayMetricsHolder.h;
+            if (imeH > 0 && full > 0) top = Math.max(0.05f, (full - imeH) / (float) full - 0.01f);
+            CaptureService.cropTop = top;
+        }
+        CaptureService.active = on;
+    }
+
+    static class DisplayMetricsHolder {
+        static int h;
+        static void real(Activity a) {
+            if (h > 0) return;
+            android.util.DisplayMetrics dm = new android.util.DisplayMetrics();
+            a.getWindowManager().getDefaultDisplay().getRealMetrics(dm);
+            h = dm.heightPixels;
+        }
+    }
+
     private void sendText(String t, String text) {
         try {
             JSONObject o = new JSONObject();
@@ -401,6 +508,15 @@ public class MainActivity extends Activity implements Client.Listener, PadView.H
         String t = m.optString("t");
         if ("cfg".equals(t)) {
             pad.applyCfg(m);
+            JSONObject kb = m.optJSONObject("kb");
+            if (kb != null) {
+                mirrorWanted = kb.optBoolean("mirror", false) && "gboard".equals(kb.optString("input"));
+                CaptureService.fps = kb.optInt("mirrorFps", 15);
+                CaptureService.width = kb.optInt("mirrorWidth", 540);
+                CaptureService.quality = kb.optInt("mirrorQuality", 60);
+                // 映す設定なのに未許可なら、接続直後（まだスマホを見ている時）に1回だけ許可を求める
+                if (mirrorWanted && !CaptureService.running && !captureAsked) requestCapture();
+            }
             updatePhoneKeyboard();
         } else if ("setmode".equals(t)) {
             pad.setMode(m.optString("m", "mouse"));

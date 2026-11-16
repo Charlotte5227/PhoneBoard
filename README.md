@@ -65,7 +65,8 @@
 - **変換中の文字はPC画面に大きく表示** され、Gboardの「変換」キーで候補を切り替えると表示も切り替わります。
 - 確定するとPCのアプリに入力されます（PCのIMEは自動でOFFになります）。削除・改行・カーソル移動もそのままPCへ。
 - キーボードを閉じる（戻る）とマウスに戻ります。キーボードの上に見えている部分はマウスパッドとして使えます。
-- Gboardの画面上の指の位置はアプリから取得できないため、この方式では「指の位置の表示」はありません。
+- **キーボード画面をPCに映す**: 接続した時にスマホに「画面の共有」の許可が出るので、**「画面全体」** を選んで開始してください（Androidの決まりでアプリを起動するたびに1回必要。VRをかぶる前に）。以後、キーボードを開いている間だけ、Gboardの画面がPC画面に映ります。
+- **指の位置も映すには**: スマホの「設定 → 開発者向けオプション → タップを表示」をオンにします（開発者向けオプションは「設定 → デバイス情報 → ビルド番号」を7回タップで出ます）。アプリの接続画面にこの設定を開くボタンもあります。
 
 ### キーボード（PhoneBoardフリック・設定「キーボード」で切替）
 スマホ画面の右下に、4列×4行の小さめのキーボードがあります（大きさ・位置は設定で変更可）。
@@ -116,7 +117,8 @@
 Linux（Ubuntu 24.04）で両方ビルドできます。Gradle や Android Studio は不要です。
 
 ```sh
-sudo apt install golang android-sdk-platform-23 aapt apksigner zipalign dalvik-exchange default-jdk-headless binutils-mingw-w64-x86-64
+# Android SDK の android.jar (API 30以上) を ANDROID_HOME か ANDROID_JAR で指定
+sudo apt install golang aapt apksigner zipalign dalvik-exchange default-jdk-headless binutils-mingw-w64-x86-64
 ./build.sh      # → dist/PhoneBoard.exe, dist/PhoneBoard.apk
 ```
 

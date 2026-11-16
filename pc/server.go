@@ -12,7 +12,7 @@ import (
 	"time"
 )
 
-const Version = "1.2.0"
+const Version = "1.3.0"
 
 // Session は1台のスマホとのTCP接続。改行区切りJSONでやり取りする。
 type Session struct {
@@ -120,6 +120,10 @@ func handleConn(app *App, c net.Conn) {
 		}
 		var m Msg
 		if err := json.Unmarshal(sc.Bytes(), &m); err != nil {
+			continue
+		}
+		if m.T == "frame" {
+			app.HandleFrame(s, &m) // 画像の展開は重いのでロックの外で
 			continue
 		}
 		app.Handle(s, &m)
