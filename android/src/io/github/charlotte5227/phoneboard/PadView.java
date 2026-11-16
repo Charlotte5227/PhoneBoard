@@ -76,6 +76,7 @@ public class PadView extends View {
     private boolean moved, second, dragging, longFired;
     private float vx, vy; // スクロール速度 dp/ms
     private long lastMtSend;
+    private long evTime;
     private Runnable pendingClick;
 
     public PadView(Context c, Host host) {
@@ -221,6 +222,7 @@ public class PadView extends View {
             o.put("x", x / Math.max(1, getWidth()));
             o.put("y", y / Math.max(1, getHeight()));
             if (z >= -1) o.put("z", z);
+            if ("kt".equals(t)) o.put("ts", evTime);
             host.send(o);
         } catch (Exception ignored) {
         }
@@ -322,6 +324,7 @@ public class PadView extends View {
     @Override
     public boolean onTouchEvent(MotionEvent e) {
         int act = e.getActionMasked();
+        evTime = e.getEventTime();
         switch (act) {
             case MotionEvent.ACTION_DOWN: {
                 activeId = e.getPointerId(0);

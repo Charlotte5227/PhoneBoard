@@ -20,9 +20,16 @@ func newTestEngine(explore bool) (*Engine, *rec) {
 		}
 	})
 	cfg := DefaultConfig().Keyboard
+	cfg.Style = "flick"
+	if explore {
+		cfg.Style = "dwell"
+	}
 	cfg.Explore = explore
+	cfg.FlickDp = 26
+	cfg.RearmDp = 110
 	l := DefaultLayouts()
 	e.Configure(cfg, &l.Keyboards[0], l.Region, 400, 860)
+	e.Clock = nil
 	return e, r
 }
 
@@ -170,7 +177,7 @@ func TestTypistIME(t *testing.T) {
 	ty.Commit("{CYCLE}") // っ
 	ty.Commit("ん")
 	ops := strings.Join(inj.Ops, "|")
-	want := "ime true|ime true|ascii ka|key []+0x8|ascii ga|ime true|ascii tu|key []+0x8|ascii ltu|ime true|ascii nn"
+	want := "ime true|ascii ka|key []+0x8|ascii ga|ascii tu|key []+0x8|ascii ltu|ascii nn"
 	if ops != want {
 		t.Fatalf("\n got %s\nwant %s", ops, want)
 	}
@@ -188,7 +195,7 @@ func TestTypistAlpha(t *testing.T) {
 	ty.Commit("{CASE}")
 	ty.Commit("{CTRL+SHIFT+Z}")
 	ops := strings.Join(inj.Ops, "|")
-	want := "ime false|ime false|ascii a|key []+0x8|ascii A|key [17 16]+0x5a"
+	want := "ime false|ascii a|key []+0x8|ascii A|key [17 16]+0x5a"
 	if ops != want {
 		t.Fatalf("\n got %s\nwant %s", ops, want)
 	}

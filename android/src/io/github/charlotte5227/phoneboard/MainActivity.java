@@ -8,6 +8,7 @@ import android.graphics.Typeface;
 import android.os.Build;
 import android.os.Bundle;
 import android.os.Vibrator;
+import android.net.wifi.WifiManager;
 import android.text.InputType;
 import android.util.TypedValue;
 import android.view.Gravity;
@@ -46,6 +47,7 @@ public class MainActivity extends Activity implements Client.Listener, PadView.H
     private Vibrator vibrator;
     private boolean setupByUser;
     private String lastStatus = "";
+    private WifiManager.WifiLock wifiLock;
 
     @Override
     protected void onCreate(Bundle b) {
@@ -97,8 +99,30 @@ public class MainActivity extends Activity implements Client.Listener, PadView.H
     @Override
     protected void onResume() {
         super.onResume();
+        acquireWifiLock();
         hideSystemUi();
         applyBrightness();
+    }
+
+    @Override
+    protected void onPause() {
+        super.onPause();
+        if (wifiLock != null && wifiLock.isHeld()) wifiLock.release();
+    }
+
+    /** Wi-Fiの省電力（パケットがまとめて遅れて届く）を止めて、カーソルのカクつき・切断を防ぐ。 */
+    private void acquireWifiLock() {
+        try {
+            if (wifiLock == null) {
+                WifiManager wm = (WifiManager) getApplicationContext().getSystemService(Context.WIFI_SERVICE);
+                if (wm == null) return;
+                int mode = Build.VERSION.SDK_INT >= 29 ? 4 /* FULL_LOW_LATENCY */ : 3 /* FULL_HIGH_PERF */;
+                wifiLock = wm.createWifiLock(mode, "PhoneBoard");
+                wifiLock.setReferenceCounted(false);
+            }
+            if (!wifiLock.isHeld()) wifiLock.acquire();
+        } catch (Throwable ignored) {
+        }
     }
 
     @Override

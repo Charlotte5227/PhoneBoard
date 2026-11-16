@@ -240,7 +240,8 @@ func imeMsg(wnd uintptr, cmd, val uintptr) (uintptr, bool) {
 	return res, r != 0
 }
 
-// SetIME は前面ウィンドウのIMEをON/OFFする（ON時はひらがな・ローマ字入力に）。
+// SetIME は前面ウィンドウのIMEをON/OFFする。
+// 変換モード（ひらがな/ローマ字など）には触れない（触ると入力中の文字が確定されることがある）。
 func (w *winInjector) SetIME(open bool, kana bool) {
 	fg, _, _ := pGetForegroundWindow.Call()
 	if fg == 0 {
@@ -266,15 +267,6 @@ func (w *winInjector) SetIME(open bool, kana bool) {
 			v = 1
 		}
 		imeMsg(ime, imcSetOpenStatus, v)
-	}
-	if open && kana {
-		mode, ok := imeMsg(ime, imcGetConversionMode, 0)
-		if ok {
-			want := mode | imeCmodeNative | imeCmodeFullShape | imeCmodeRoman
-			if want != mode {
-				imeMsg(ime, imcSetConversionMode, want)
-			}
-		}
 	}
 }
 

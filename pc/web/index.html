@@ -76,7 +76,8 @@ ol li{margin:4px 0}
   <ul>
     <li><b>音量↑</b>: マウス ⇔ キーボード 切替（「ボタン」タブで変更可）</li>
     <li><b>マウス</b>: パッドをなぞる=カーソル移動 / タップ=左クリック / 右端の帯=スクロール / 下段=キーボード・左右切替・右クリック。音量↓を押している間は左ボタンを押しっぱなし（ドラッグ用）。</li>
-    <li><b>キーボード</b>: 指を置いてなぞると、PC画面のキーボードで<b>指の位置と、その下のキー</b>が光ります。指を止めると振動して緑になり（確定待機）、そこからはじいた方向の文字が、指を離した時に入力されます。止める前に離すと取り消し。慣れたら置いてすぐはじく通常フリックも使えます。</li>
+    <li><b>キーボード</b>: 指を置いてなぞると、PC画面のキーボードで<b>指の位置と、その下のキー</b>が光ります（キーをまたぐと振動）。<b>そのまま離すとそのキー</b>、<b>最後にはじいて離すとフリック文字</b>が入力されます。PC画面右上に「離すと ○」と、入力される文字が出ます。やめる時はキーボードの外（上）へ指を出してから離します。</li>
+    <li><b>変換</b>: 右列の「変換」キーで漢字変換（もう一度で次の候補）、「改行」で確定。「変換」キーを左右にはじくとカーソル移動。</li>
     <li>スマホ画面の左上隅を2秒長押しすると接続設定画面に戻ります。</li>
   </ul>
   <h3>全般</h3>
@@ -85,13 +86,30 @@ ol li{margin:4px 0}
 
 <section data-tab="マウス"><div class="grid" id="f-mouse"></div></section>
 <section data-tab="キーボード"><div class="grid" id="f-keyboard"></div>
-  <h3>操作の流れ</h3>
-  <p class="sub">置く → なぞって探す（キー移動ごとに短く振動）→ 止める（「確定待機までの時間」後に強めの振動・PC画面で緑）→ はじく（方向ごとに振動）→ 離して入力。<br>
-  確定待機のあと大きく動かすと（「探し直し距離」）、もう一度探し直せます。「探り入力」をオフにすると普通のフリック入力になります。</p>
+  <h3>入力方式</h3>
+  <p class="sub"><b>かんたん</b>: なぞって探す → 離すとそのキー / 最後に素早くはじくとフリック文字。キーボードの外で離すと取り消し。待ち時間なし。<br>
+  <b>確実</b>: なぞって探す → 指を止める（振動・緑）→ はじいて離す。止める前に離すと取り消し。<br>
+  <b>普通のフリック</b>: スマホの通常のフリック入力と同じ。</p>
 </section>
 <section data-tab="振動"><div class="grid" id="f-haptic"></div></section>
-<section data-tab="PC表示"><div class="grid" id="f-overlay"></div>
-  <div class="toolbar"><button class="b" onclick="preview()">PC画面で表示を確認</button></div></section>
+<section data-tab="PC表示">
+  <h3>キーボード表示の位置と大きさ</h3>
+  <p class="sub">下の画面の縮図で、青い枠（キーボード表示）をドラッグすると、PC画面上の表示も一緒に動きます。</p>
+  <div style="display:flex;gap:22px;flex-wrap:wrap;align-items:flex-start">
+    <div id="scr" style="position:relative;width:520px;max-width:100%;background:#0b0b0e;border:2px solid #444;border-radius:8px;touch-action:none">
+      <div id="ovbox" style="position:absolute;background:rgba(91,140,255,.35);border:2px solid #5b8cff;border-radius:6px;cursor:move;display:flex;align-items:center;justify-content:center;font-size:12px">キーボード</div>
+    </div>
+    <div style="min-width:260px">
+      <div class="row"><label>大きさ(幅px)</label><input id="ovw" type="range" min="200" max="1000" step="10"><span class="val" id="ovwv"></span></div>
+      <div class="toolbar">
+        <button class="b" onclick="ovPos(.5,.78)">下中央</button><button class="b" onclick="ovPos(.82,.75)">右下</button>
+        <button class="b" onclick="ovPos(.18,.75)">左下</button><button class="b" onclick="ovPos(.5,.5)">中央</button>
+      </div>
+      <button class="b" onclick="preview()">PC画面で確認（4秒）</button>
+    </div>
+  </div>
+  <h3>その他</h3>
+  <div class="grid" id="f-overlay"></div></section>
 <section data-tab="ボタン">
   <p class="sub">スマホの音量ボタンに割り当てる動作です。下の「アクション一覧」の書式で指定します。クリック系は押している間ボタンを押しっぱなしにします。</p>
   <div class="grid" id="f-buttons"></div>
@@ -117,7 +135,15 @@ ol li{margin:4px 0}
         <button class="b" onclick="addLayout()">配列を複製して追加</button>
         <button class="b d" onclick="delLayout()">この配列を削除</button>
       </div>
-      <h3>キーボードの位置（全配列共通・スマホ画面に対する%）</h3>
+      <h3>かんたん配置（スマホ画面のどこにキーボードを置くか）</h3>
+      <div class="toolbar">
+        <button class="b" onclick="easyPlace('right')">右手（右下）</button>
+        <button class="b" onclick="easyPlace('left')">左手（左下）</button>
+        <button class="b" onclick="easyPlace('center')">中央下</button>
+      </div>
+      <div class="row"><label>横幅（画面の%）</label><input id="ezw" type="range" min="40" max="100" step="1"><span class="val" id="ezwv"></span></div>
+      <div class="row"><label>高さ（画面の%）</label><input id="ezh" type="range" min="15" max="70" step="1"><span class="val" id="ezhv"></span></div>
+      <h3>細かい位置（全配列共通・スマホ画面に対する%）</h3>
       <div class="toolbar">
         <label>左 <input id="rx" type="number" step="1" style="width:66px"></label>
         <label>上 <input id="ry" type="number" step="1" style="width:66px"></label>
@@ -125,11 +151,7 @@ ol li{margin:4px 0}
         <label>高さ <input id="rh" type="number" step="1" style="width:66px"></label>
       </div>
       <div class="toolbar">
-        <button class="b" onclick="regionPreset(0,42,100,58)">全幅・下</button>
-        <button class="b" onclick="regionPreset(12,48,88,52)">右手寄せ</button>
-        <button class="b" onclick="regionPreset(0,48,88,52)">左手寄せ</button>
-        <button class="b" onclick="regionPreset(0,30,100,70)">大きく</button>
-        <button class="b" onclick="mirrorKeys()">左右反転（左手用）</button>
+        <button class="b" onclick="mirrorKeys()">キーの並びを左右反転</button>
       </div>
       <h3>選択中のキー <span id="selInfo" class="sub"></span></h3>
       <div id="keyForm">
@@ -231,17 +253,16 @@ const SCHEMA={
   ["tapDrag","ダブルタップしてそのままなぞる＝ドラッグ","bool"],["tapDelayMs","↑のためのクリック待ち時間(ms)","range",80,450,10],
   ["longPress","パッド長押しの動作","select",{none:"なし",right:"右クリック",drag:"ドラッグ開始"}],["longPressMs","長押し時間(ms)","range",250,1500,10],
   ["rightClickOneShot","「タップ=右クリック」は1回クリックしたら左に戻す","bool"]],
- keyboard:[["explore","探り入力（なぞって探し、止めて確定待機）","bool"],["dwellMs","確定待機までの静止時間(ms)","range",100,900,10],
-  ["quickMs","この時間内に離せば通常フリック(ms)","range",100,900,10],["flickDp","フリック判定距離(dp)","range",8,70,1],
-  ["stillDp","静止とみなす揺れ(dp)","range",2,25,1],["rearmDp","確定待機後の探し直し距離(dp, 0=無効)","range",0,300,5],
+ keyboard:[["style","入力方式","select",{simple:"かんたん（なぞって離す／はじく）",dwell:"確実（止めて確定待機）",flick:"普通のフリック"}],
+  ["flickDp","フリック判定距離(dp) 小さいほど短いはじきで反応","range",8,70,1],["flickSpeed","かんたん: はじきと判定する速さ（大きいほど速く動かす必要）","range",0.1,1.2,0.05],
+  ["dwellMs","確実: 確定待機までの静止時間(ms)","range",100,900,10],["quickMs","確実: この時間内に離せば通常フリック(ms)","range",100,900,10],
+  ["stillDp","静止とみなす揺れ(dp)","range",2,25,1],["rearmDp","はじいた後、この距離以上動いたら探し直し(dp)","range",0,300,5],
   ["repeatDelayMs","⌫等のリピート開始(ms)","range",150,1200,10],["repeatIntervalMs","リピート間隔(ms)","range",20,250,5],
   ["kanaOutput","かなの送り方","select",{ime:"IMEへローマ字で送る（漢字変換できる）",unicode:"ひらがなを直接送る（変換なし）"}],
   ["imeControl","配列切替時にIMEのON/OFFを自動で合わせる","bool"]],
  haptic:[["enabled","振動を使う","bool"],["hoverMs","別のキーに移った時(ms)","range",0,40,1],["armMs","確定待機になった時(ms)","range",0,100,1],
   ["dirMs","はじく方向が変わった時(ms)","range",0,40,1],["commitMs","入力した時(ms)","range",0,80,1],["toggleMs","モード切替(ms)","range",0,120,1],["amp","強さ","range",1,255,1]],
- overlay:[["width","キーボード表示の幅(px)","range",280,1400,10],["opacity","不透明度(%)","range",20,100,1],
-  ["anchor","キーボード表示の位置","select",{bottom:"下中央","bottom-left":"左下","bottom-right":"右下",center:"中央",top:"上中央","top-left":"左上","top-right":"右上"}],
-  ["offsetX","位置の微調整 横(px)","range",-1000,1000,5],["offsetY","位置の微調整 縦(px)","range",-1000,1000,5],
+ overlay:[["opacity","不透明度(%)","range",20,100,1],
   ["showHints","キーにフリック先の文字を小さく表示","bool"],["showHistory","入力した文字の履歴を表示","bool"],
   ["miniMap","マウス操作中、触れている位置を小窓で表示","bool"],["miniWidth","小窓の幅(px)","range",80,500,5],
   ["miniAnchor","小窓の位置","select",{"bottom-right":"右下","bottom-left":"左下","top-right":"右上","top-left":"左上"}],["toast","モード切替などを画面中央に表示","bool"]],
@@ -259,7 +280,7 @@ function flash(t){const s=$('saved');s.textContent=t||'保存しました';s.sty
 // タブ
 const tabs=[...document.querySelectorAll('section')];
 tabs.forEach((s,i)=>{const b=document.createElement('button');b.textContent=s.dataset.tab;b.onclick=()=>show(i);$('nav').appendChild(b)});
-function show(i){tabs.forEach((s,j)=>{s.classList.toggle('on',i==j);$('nav').children[j].classList.toggle('on',i==j)});localStorage.pbTab=i;drawK();drawM()}
+function show(i){tabs.forEach((s,j)=>{s.classList.toggle('on',i==j);$('nav').children[j].classList.toggle('on',i==j)});localStorage.pbTab=i;drawK();drawM();if(typeof drawOv=='function')drawOv()}
 ACTIONS.forEach(([a,d])=>{const o=document.createElement('option');o.value=a;o.label=d;$('acts').appendChild(o);
   const tr=document.createElement('tr');tr.innerHTML=`<td><code>${a}</code></td><td>${d}</td>`;$('acttable').appendChild(tr)});
 
@@ -354,9 +375,9 @@ function regionPreset(x,y,w,h){Object.assign(rgn(),{x:x/100,y:y/100,w:w/100,h:h/
 function mirrorKeys(){for(const k of kb().keys){k.x=kb().cols-k.x-k.w;[k.l,k.r]=[k.r,k.l]}drawK();fillKeyForm()}
 function addLayout(){const c=JSON.parse(JSON.stringify(kb()));c.name+='2';c.title+='2';lay.keyboards.push(c);kbi=lay.keyboards.length-1;renderKb()}
 function delLayout(){if(lay.keyboards.length<=1)return alert('最後の配列は削除できません');if(!confirm(kb().title+' を削除しますか？'))return;lay.keyboards.splice(kbi,1);kbi=0;renderKb()}
-async function loadLayouts(){lay=await api('/api/layouts');if(kbi>=lay.keyboards.length)kbi=0;sel=-1;zsel=-1;renderKb();fillZoneForm();drawM()}
+async function loadLayouts(){lay=await api('/api/layouts');if(kbi>=lay.keyboards.length)kbi=0;sel=-1;zsel=-1;renderKb();syncEasy();fillZoneForm();drawM()}
 async function saveLayouts(){if(overlaps().size&&!confirm('重なっているキーがあります。保存しますか？'))return;lay=await api('/api/layouts',lay);renderKb();drawM();flash('保存してスマホに反映しました')}
-async function resetLayouts(){if(!confirm('キー配列とマウス画面をすべて既定に戻しますか？'))return;lay=await api('/api/layouts',await api('/api/layouts/default'));kbi=0;sel=-1;renderKb();drawM();flash('既定に戻しました')}
+async function resetLayouts(){if(!confirm('キー配列とマウス画面をすべて既定に戻しますか？'))return;lay=await api('/api/layouts',await api('/api/layouts/default'));kbi=0;sel=-1;renderKb();syncEasy();drawM();flash('既定に戻しました')}
 async function previewKb(){await saveLayouts();await api('/api/preview?kb='+encodeURIComponent(kb().name),{})}
 function exportLayouts(){const a=document.createElement('a');a.href=URL.createObjectURL(new Blob([JSON.stringify(lay,null,2)],{type:'application/json'}));a.download='phoneboard-layouts.json';a.click()}
 function importLayouts(inp){const f=inp.files[0];if(!f)return;f.text().then(t=>{lay=JSON.parse(t);kbi=0;renderKb();drawM();flash('読み込みました（保存で反映）')}).catch(e=>alert(e))}
@@ -380,10 +401,37 @@ function delZone(){if(zsel<0)return;lay.mouseZones.splice(zsel,1);zsel=-1;fillZo
 function mirrorZones(){for(const z of lay.mouseZones)z.x=Math.max(0,1-z.x-z.w);drawM();fillZoneForm()}
 async function defaultZones(){const d=await api('/api/layouts/default');lay.mouseZones=d.mouseZones;zsel=-1;fillZoneForm();drawM()}
 
+// ===== PC表示の位置ドラッグ =====
+const scr=$('scr'),ovbox=$('ovbox');
+function kbAspect(){const r=lay.region,p=status.phone;return (r.w*(p.wdp||400))/Math.max(1,r.h*(p.hdp||860))}
+function drawOv(){if(!cfg)return;const o=cfg.overlay;const sw=screen.width||1920,sh=screen.height||1080;scr.style.aspectRatio=sw+'/'+sh;
+  const W=scr.clientWidth,H=scr.clientHeight;const w=o.width/sw*W,h=(o.width-16)/kbAspect()/sw*W+40/sw*W;
+  if(o.anchor!='custom'){o.anchor='custom'}
+  ovbox.style.width=w+'px';ovbox.style.height=h+'px';ovbox.style.left=(o.posX*W-w/2)+'px';ovbox.style.top=(o.posY*H-h/2)+'px';
+  $('ovw').value=o.width;$('ovwv').textContent=o.width}
+let ovDrag=null;
+ovbox.onpointerdown=ev=>{ovDrag={x:ev.clientX,y:ev.clientY,px:cfg.overlay.posX,py:cfg.overlay.posY};ovbox.setPointerCapture(ev.pointerId)};
+ovbox.onpointermove=ev=>{if(!ovDrag)return;const o=cfg.overlay;o.posX=Math.min(.98,Math.max(.02,ovDrag.px+(ev.clientX-ovDrag.x)/scr.clientWidth));
+  o.posY=Math.min(.98,Math.max(.02,ovDrag.py+(ev.clientY-ovDrag.y)/scr.clientHeight));drawOv();saveCfg()};
+ovbox.onpointerup=()=>ovDrag=null;
+$('ovw').oninput=()=>{cfg.overlay.width=+$('ovw').value;drawOv();saveCfg()};
+function ovPos(x,y){cfg.overlay.posX=x;cfg.overlay.posY=y;drawOv();saveCfg()}
+window.addEventListener('resize',drawOv);
+
+// ===== かんたん配置 =====
+let hand='right';
+function easyApply(){const w=(+$('ezw').value)/100,h=(+$('ezh').value)/100;$('ezwv').textContent=$('ezw').value+'%';$('ezhv').textContent=$('ezh').value+'%';
+  const r=rgn();r.w=w;r.h=h;r.y=1-h;r.x=hand=='right'?1-w:hand=='left'?0:(1-w)/2;renderKb();
+  clearTimeout(easyApply.t);easyApply.t=setTimeout(async()=>{lay=await api('/api/layouts',lay);renderKb();flash('スマホに反映しました')},400)}
+function easyPlace(hd){hand=hd;easyApply()}
+$('ezw').oninput=easyApply;$('ezh').oninput=easyApply;
+function syncEasy(){const r=rgn();$('ezw').value=Math.round(r.w*100);$('ezh').value=Math.round(r.h*100);$('ezwv').textContent=$('ezw').value+'%';$('ezhv').textContent=$('ezh').value+'%';
+  hand=r.x<0.01&&r.w<0.99?'left':(Math.abs(r.x+r.w-1)<0.01?'right':'center')}
+
 (async()=>{
   cfg=await api('/api/config');lay=await api('/api/layouts');status=await api('/api/status');
   buildForm('general');buildForm('mouse','mouse');buildForm('keyboard','keyboard');buildForm('haptic','haptic');buildForm('overlay','overlay');buildForm('buttons','buttons');
-  renderStatus();fitCanvas();renderKb();fillZoneForm();drawM();show(+(localStorage.pbTab||0));setInterval(poll,1000);
+  renderStatus();fitCanvas();renderKb();syncEasy();fillZoneForm();drawM();show(+(localStorage.pbTab||0));drawOv();setInterval(poll,1000);
 })();
 </script>
 </body>

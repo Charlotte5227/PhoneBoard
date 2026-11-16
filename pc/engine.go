@@ -42,7 +42,8 @@ type EngineSnap struct {
 	Dir      Dir
 	RX, RY   float64 // キーボード領域内の位置 (0〜1, 範囲外もあり)
 	Inside   bool
-	Canceled bool // 直前のタッチが取り消された
+	Canceled bool   // 直前のタッチが取り消された
+	Preview  string // 今指を離すと入力されるもの（"" = 何も入力されない）
 }
 
 // Engine は「探って・止めて・はじく」片手フリック入力の判定を行う。
@@ -76,6 +77,20 @@ type Engine struct {
 	reps   int
 	lastRp int64
 	cancel bool
+
+	// かんたん方式(simple)用
+	style    string
+	samples  []sample
+	flicking bool
+	fromDown bool  // 触れた時からずっと同じキーの上にいる（リピート判定用）
+	recvMove int64 // 最後に動いた時刻（PC時計）
+	recvStil int64 // 静止し始めた時刻（PC時計）
+	Clock    func() int64
+}
+
+type sample struct {
+	x, y float64
+	t    int64
 }
 
 func NewEngine(emit func(EngineEvent)) *Engine {
@@ -84,6 +99,13 @@ func NewEngine(emit func(EngineEvent)) *Engine {
 
 func (e *Engine) Configure(cfg KeyboardCfg, lay *KbLayout, reg Region, wdp, hdp float64) {
 	e.cfg = cfg
+	e.style = cfg.Style
+	if e.style == "" {
+		e.style = "simple"
+	}
+	if e.style == "flick" {
+		e.cfg.Explore = false
+	}
 	e.lay = lay
 	e.reg = reg
 	if wdp > 0 {
@@ -103,6 +125,15 @@ func (e *Engine) reset() {
 	e.armKey = -1
 	e.dir = DirC
 	e.reps = 0
+	e.flicking = false
+	e.samples = e.samples[:0]
+}
+
+func (e *Engine) clock(t int64) int64 {
+	if e.Clock != nil {
+		return e.Clock()
+	}
+	return t
 }
 
 // HitTest は画面座標(0〜1)にあるキーの番号を返す。
@@ -174,6 +205,10 @@ func (e *Engine) arm(t int64) {
 }
 
 func (e *Engine) Down(x, y float64, t int64) {
+	if e.style == "simple" {
+		e.simpleDown(x, y, t)
+		return
+	}
 	e.reset()
 	e.cancel = false
 	e.downX, e.downY, e.downT = x, y, t
@@ -194,6 +229,10 @@ func (e *Engine) Down(x, y float64, t int64) {
 
 func (e *Engine) Move(x, y float64, t int64) {
 	if e.state == stIdle {
+		return
+	}
+	if e.style == "simple" {
+		e.simpleMove(x, y, t)
 		return
 	}
 	e.curX, e.curY = x, y
@@ -232,6 +271,10 @@ func (e *Engine) Move(x, y float64, t int64) {
 
 // Tick は指が止まっている間の時間経過処理（確定待機・キーリピート）。
 func (e *Engine) Tick(t int64) {
+	if e.style == "simple" {
+		e.simpleTick(t)
+		return
+	}
 	switch e.state {
 	case stExplore:
 		if e.hover >= 0 && t-e.stillT >= int64(e.cfg.DwellMs) {
@@ -263,6 +306,10 @@ func (e *Engine) Up(x, y float64, t int64) {
 	if e.state == stIdle {
 		return
 	}
+	if e.style == "simple" {
+		e.simpleUp(x, y, t)
+		return
+	}
 	e.Move(x, y, t)
 	switch e.state {
 	case stArmed:
@@ -289,13 +336,18 @@ func (e *Engine) Cancel() {
 }
 
 func (e *Engine) Snap() EngineSnap {
+	armed := e.state == stArmed
+	if e.style == "simple" {
+		armed = e.state != stIdle && e.flicking
+	}
 	s := EngineSnap{
 		Touching: e.state != stIdle,
-		Armed:    e.state == stArmed,
+		Armed:    armed,
 		Hover:    e.hover,
 		ArmKey:   e.armKey,
 		Dir:      e.dir,
 		Canceled: e.cancel,
+		Preview:  e.preview(),
 	}
 	if e.reg.W > 0 && e.reg.H > 0 {
 		s.RX = (e.curX - e.reg.X) / e.reg.W
@@ -303,4 +355,188 @@ func (e *Engine) Snap() EngineSnap {
 		s.Inside = s.RX >= 0 && s.RX < 1 && s.RY >= 0 && s.RY < 1
 	}
 	return s
+}
+
+func (e *Engine) slot(ki int, d Dir) string {
+	if e.lay == nil || ki < 0 || ki >= len(e.lay.Keys) {
+		return ""
+	}
+	return e.lay.Keys[ki].Slot(d)
+}
+
+func (e *Engine) preview() string {
+	switch {
+	case e.state == stIdle:
+		return ""
+	case e.style == "simple":
+		if e.flicking {
+			return e.slot(e.armKey, e.dir)
+		}
+		return e.slot(e.armKey, DirC)
+	case e.state == stArmed:
+		return e.slot(e.armKey, e.dir)
+	}
+	return ""
+}
+
+// ===== かんたん方式 =====
+//
+//   - 指を置いてなぞる → 指の下のキーがPC画面で光る（キーをまたぐと振動）
+//   - そのまま離す → 光っているキー（タップの文字）を入力
+//   - 最後に素早くはじいて離す → はじき始めたキーの、その方向の文字を入力
+//   - キーボードの外（上など）へ指を出して離す → 取り消し
+//
+// 「なぞる」と「はじく」は指の速さで区別する（スマホ側の時刻で計算するので通信の揺れに強い）。
+
+func (e *Engine) simpleDown(x, y float64, t int64) {
+	e.reset()
+	e.cancel = false
+	e.state = stExplore
+	e.downX, e.downY, e.downT = x, y, t
+	e.curX, e.curY = x, y
+	e.ancX, e.ancY = x, y
+	e.stillX, e.stillY = x, y
+	e.samples = append(e.samples[:0], sample{x, y, t})
+	e.armKey = e.HitTest(x, y)
+	e.hover = e.armKey
+	e.fromDown = true
+	now := e.clock(t)
+	e.recvMove, e.recvStil = now, now
+	if e.armKey >= 0 {
+		e.haptic("hover")
+	}
+}
+
+// speed は直近約60msの移動速度(dp/ms)。
+func (e *Engine) speed(x, y float64, t int64) float64 {
+	if len(e.samples) == 0 {
+		return 0
+	}
+	ref := e.samples[len(e.samples)-1]
+	for i := len(e.samples) - 1; i >= 0; i-- {
+		if t-e.samples[i].t <= 60 {
+			ref = e.samples[i]
+		} else {
+			break
+		}
+	}
+	dt := float64(t - ref.t)
+	if dt > 60 {
+		// 止まっていた後の最初の動き: スマホは動いている間だけ約16ms毎に送ってくるので、1フレーム分の動きとみなす
+		dt = 16
+	}
+	if dt < 8 {
+		dt = 8
+	}
+	return e.distDp(ref.x, ref.y, x, y) / dt
+}
+
+func (e *Engine) slideTo(x, y float64) {
+	e.flicking = false
+	e.dir = DirC
+	e.ancX, e.ancY = x, y
+	k := e.HitTest(x, y)
+	if k != e.armKey {
+		e.armKey = k
+		e.fromDown = false
+		if k >= 0 {
+			e.haptic("hover")
+		}
+	}
+	e.hover = k
+}
+
+func (e *Engine) simpleMove(x, y float64, t int64) {
+	v := e.speed(x, y, t)
+	e.samples = append(e.samples, sample{x, y, t})
+	if len(e.samples) > 64 {
+		e.samples = append(e.samples[:0], e.samples[len(e.samples)-32:]...)
+	}
+	e.curX, e.curY = x, y
+	now := e.clock(t)
+	e.recvMove = now
+	if e.distDp(e.stillX, e.stillY, x, y) > e.cfg.StillDp {
+		e.stillX, e.stillY = x, y
+		e.recvStil = now
+	}
+	vec := e.distDp(e.ancX, e.ancY, x, y)
+	if !e.flicking {
+		if v < e.cfg.FlickSpeed {
+			e.slideTo(x, y) // ゆっくり＝なぞって探している
+			return
+		}
+		if vec >= e.cfg.FlickDp && e.armKey >= 0 {
+			e.flicking = true
+			e.dir = e.dirOf(e.ancX, e.ancY, x, y)
+			if e.slot(e.armKey, e.dir) != "" {
+				e.haptic("dir")
+			}
+		}
+		return
+	}
+	// はじいている最中
+	if e.cfg.RearmDp > 0 && vec > e.cfg.RearmDp {
+		e.slideTo(x, y) // 遠くまで動いた＝素早く移動しただけ
+		return
+	}
+	if vec < e.cfg.FlickDp*0.6 {
+		e.flicking = false // 元の位置に戻した
+		e.dir = DirC
+		return
+	}
+	d := e.dirOf(e.ancX, e.ancY, x, y)
+	if d != e.dir {
+		e.dir = d
+		if e.slot(e.armKey, d) != "" {
+			e.haptic("dir")
+		}
+	}
+}
+
+func (e *Engine) simpleTick(t int64) {
+	if e.state == stIdle {
+		return
+	}
+	// はじいた後に指を止めたまま → 素早く移動して止まっただけとみなし、今のキーに合わせる
+	if e.flicking && t-e.recvStil >= 400 {
+		e.slideTo(e.curX, e.curY)
+		return
+	}
+	// 削除などのリピート（触れた時からそのキーの上で止めている場合だけ。なぞって来た時は探しているだけなので無し）
+	if e.flicking || !e.fromDown || e.lay == nil || e.armKey < 0 || !e.lay.Keys[e.armKey].Repeat {
+		return
+	}
+	if e.reps == 0 {
+		if t-e.recvStil >= int64(e.cfg.RepeatDelayMs) {
+			e.commit(e.armKey, DirC)
+			e.reps = 1
+			e.lastRp = t
+		}
+	} else if t-e.lastRp >= int64(e.cfg.RepeatIntervalMs) {
+		e.commit(e.armKey, DirC)
+		e.reps++
+		e.lastRp = t
+	}
+}
+
+func (e *Engine) simpleUp(x, y float64, t int64) {
+	if x != e.curX || y != e.curY {
+		e.simpleMove(x, y, t)
+	}
+	vec := e.distDp(e.ancX, e.ancY, e.curX, e.curY)
+	switch {
+	case e.armKey < 0:
+		e.cancel = true
+		e.haptic("cancel")
+	case e.flicking:
+		e.commit(e.armKey, e.dir)
+	case vec >= e.cfg.FlickDp && t-e.samples[0].t <= int64(e.cfg.QuickMs):
+		// ごく短いフリック（判定前に離した）
+		e.commit(e.armKey, e.dirOf(e.ancX, e.ancY, e.curX, e.curY))
+	case e.reps > 0:
+		// リピート済み
+	default:
+		e.commit(e.armKey, DirC)
+	}
+	e.reset()
 }

@@ -361,6 +361,25 @@ func (u *ui) workArea() (rect, float64) {
 	return mi.RcWork, float64(dpi) / 96
 }
 
+// placeCustom は画面に対する中心位置(0〜1)に置き、画面からはみ出さないようにする。
+func placeCustom(px, py float64, wa rect, w, h int32) (int32, int32) {
+	x := wa.L + int32(px*float64(wa.R-wa.L)) - w/2
+	y := wa.T + int32(py*float64(wa.B-wa.T)) - h/2
+	if x+w > wa.R {
+		x = wa.R - w
+	}
+	if y+h > wa.B {
+		y = wa.B - h
+	}
+	if x < wa.L {
+		x = wa.L
+	}
+	if y < wa.T {
+		y = wa.T
+	}
+	return x, y
+}
+
 func place(anchor string, wa rect, w, h, ox, oy int32) (int32, int32) {
 	cx := wa.L + (wa.R-wa.L-w)/2
 	x, y := cx, wa.B-h
@@ -414,13 +433,18 @@ func (u *ui) tick() {
 			aspect = 1.2
 		}
 		kh := int32(float64(w-2*pad) / aspect)
-		maxH := (wa.B - wa.T) * 6 / 10
+		maxH := (wa.B - wa.T) * 45 / 100
 		if kh > maxH {
 			kh = maxH
 			w = int32(float64(kh)*aspect) + 2*pad
 		}
 		h := header + kh + 2*pad
-		x, y := place(c.Anchor, wa, w, h, int32(float64(c.OffsetX)*scale), int32(float64(c.OffsetY)*scale))
+		var x, y int32
+		if c.Anchor == "custom" {
+			x, y = placeCustom(c.PosX, c.PosY, wa, w, h)
+		} else {
+			x, y = place(c.Anchor, wa, w, h, int32(float64(c.OffsetX)*scale), int32(float64(c.OffsetY)*scale))
+		}
 		u.show(u.kb, x, y, w, h, c.Opacity, changed || anim)
 	} else {
 		u.hide(u.kb)
@@ -630,37 +654,46 @@ func (u *ui) paintKb(c *canvas, cw, ch int32) {
 	if d.Caps {
 		title += "(大)"
 	}
-	c.round(pad, u.px(6), u.px(76), header-u.px(12), u.px(10), rgb(60, 90, 200), 0, 0)
-	c.text(title, pad, u.px(6), u.px(76), header-u.px(12), int(u.px(17)), colText, true, dtCenter)
+	c.round(pad, u.px(7), u.px(58), header-u.px(14), u.px(10), rgb(60, 90, 200), 0, 0)
+	c.text(title, pad, u.px(7), u.px(58), header-u.px(14), int(u.px(15)), colText, true, dtCenter)
 
 	status := ""
 	stCol := colSub
 	sn := d.Snap
+	// 右側: 今離すと入力されるもの（最重要）
 	switch {
 	case !d.Connected:
-		status = "プレビュー（未接続）"
-	case sn.Armed:
-		status = "はじいて離す"
-		stCol = colArmBd
-	case sn.Touching:
-		status = "探り中…止めると確定待機"
+		status = "プレビュー"
+	case sn.Touching && sn.Preview != "":
+		status = "離すと " + slotLabel(sn.Preview)
 		stCol = colHoverBd
+		if sn.Armed {
+			stCol = colArmBd
+		}
+	case sn.Touching && d.KbStyle == "dwell":
+		status = "止めると確定待機"
+		stCol = colHoverBd
+	case sn.Touching:
+		status = "離すと取消"
+		stCol = rgb(255, 120, 130)
 	case sn.Canceled:
 		status = "取り消し"
 	}
 	flashAge := time.Since(d.FlashAt)
 	right := status
 	if flashAge < 700*time.Millisecond && d.Flash != "" && !sn.Touching {
-		right = "▶ " + d.Flash
+		right = "入力 " + d.Flash
 		stCol = colArmBd
 	}
-	c.text(right, cw-u.px(230)-pad, 0, u.px(230), header, int(u.px(15)), stCol, true, dtRight)
+	rw := (cw - 2*pad) * 55 / 100
+	c.text(right, cw-rw-pad, 0, rw, header, int(u.px(16)), stCol, true, dtRight)
 	if d.Cfg.ShowHistory {
 		hist := []rune(d.History)
-		if len(hist) > 18 {
-			hist = hist[len(hist)-18:]
+		if len(hist) > 12 {
+			hist = hist[len(hist)-12:]
 		}
-		c.text(string(hist), pad+u.px(86), 0, cw-u.px(330), header, int(u.px(16)), colText, false, dtLeft)
+		hx := pad + u.px(64)
+		c.text(string(hist), hx, 0, cw-rw-pad-hx-u.px(4), header, int(u.px(14)), colSub, false, dtLeft)
 	}
 
 	// キーボード
@@ -712,7 +745,7 @@ func (u *ui) paintKb(c *canvas, cw, ch int32) {
 		k := &kb.Keys[sn.ArmKey]
 		x, y, w, h := keyRect(k)
 		cx, cy := x+w/2, y+h/2
-		s := int32(base*0.95) - gap
+		s := int32(base*0.78) - gap
 		pos := map[Dir][2]int32{DirC: {0, 0}, DirL: {-1, 0}, DirU: {0, -1}, DirR: {1, 0}, DirD: {0, 1}}
 		for _, dd := range []Dir{DirL, DirU, DirR, DirD, DirC} {
 			txt := slotLabel(k.Slot(dd))
@@ -728,7 +761,7 @@ func (u *ui) paintKb(c *canvas, cw, ch int32) {
 				f, b, bw = rgb(34, 160, 80), rgb(200, 255, 210), u.px(3)
 			}
 			c.round(bx, by, s, s, u.px(10), f, b, bw)
-			fs := base * 0.42
+			fs := base * 0.36
 			if len([]rune(txt)) > 2 {
 				fs = base * 0.22
 			}

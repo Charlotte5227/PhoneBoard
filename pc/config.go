@@ -26,6 +26,8 @@ type MouseCfg struct {
 }
 
 type KeyboardCfg struct {
+	Style            string  `json:"style"`            // simple: なぞって離すと入力 / dwell: 止めて確定待機 / flick: 普通のフリック
+	FlickSpeed       float64 `json:"flickSpeed"`       // simple: これより速い動きをフリックとみなす(dp/ms)
 	Explore          bool    `json:"explore"`          // 探り操作（なぞって位置を探し、止めて確定待機）
 	DwellMs          int     `json:"dwellMs"`          // 止めてから確定待機になるまで
 	QuickMs          int     `json:"quickMs"`          // この時間内に離せば通常のフリックとして扱う
@@ -49,17 +51,19 @@ type HapticCfg struct {
 }
 
 type OverlayCfg struct {
-	Width       int    `json:"width"`       // キーボード表示の幅(論理px)
-	Opacity     int    `json:"opacity"`     // 不透明度 %
-	Anchor      string `json:"anchor"`      // bottom / bottom-left / bottom-right / center / top
-	OffsetX     int    `json:"offsetX"`     //
-	OffsetY     int    `json:"offsetY"`     //
-	ShowHints   bool   `json:"showHints"`   // キーにフリック先の文字を小さく表示
-	ShowHistory bool   `json:"showHistory"` // 入力履歴を表示
-	MiniMap     bool   `json:"miniMap"`     // マウスモードで触れている位置を小さく表示
-	MiniWidth   int    `json:"miniWidth"`   //
-	MiniAnchor  string `json:"miniAnchor"`  //
-	Toast       bool   `json:"toast"`       // モード切替などを画面に表示
+	Width       int     `json:"width"`       // キーボード表示の幅(論理px)
+	Opacity     int     `json:"opacity"`     // 不透明度 %
+	Anchor      string  `json:"anchor"`      // custom(自由配置) / bottom / bottom-left / bottom-right / center / top
+	PosX        float64 `json:"posX"`        // custom: 画面に対する中心位置(0〜1)
+	PosY        float64 `json:"posY"`        //
+	OffsetX     int     `json:"offsetX"`     //
+	OffsetY     int     `json:"offsetY"`     //
+	ShowHints   bool    `json:"showHints"`   // キーにフリック先の文字を小さく表示
+	ShowHistory bool    `json:"showHistory"` // 入力履歴を表示
+	MiniMap     bool    `json:"miniMap"`     // マウスモードで触れている位置を小さく表示
+	MiniWidth   int     `json:"miniWidth"`   //
+	MiniAnchor  string  `json:"miniAnchor"`  //
+	Toast       bool    `json:"toast"`       // モード切替などを画面に表示
 }
 
 type ButtonCfg struct {
@@ -69,7 +73,11 @@ type ButtonCfg struct {
 	KbVolDown    string `json:"kbVolDown"`
 }
 
+// configSchema は設定形式の版。上げると古い既定値を新しい既定値に置き換える。
+const configSchema = 2
+
 type Config struct {
+	Schema      int         `json:"schema"`
 	Port        int         `json:"port"`
 	PIN         string      `json:"pin"`
 	RequirePin  bool        `json:"requirePin"`
@@ -83,6 +91,7 @@ type Config struct {
 
 func DefaultConfig() *Config {
 	return &Config{
+		Schema:      configSchema,
 		Port:        39500,
 		PIN:         randomPIN(),
 		RequirePin:  true,
@@ -94,12 +103,13 @@ func DefaultConfig() *Config {
 			RightClickOneShot: true,
 		},
 		Keyboard: KeyboardCfg{
-			Explore: true, DwellMs: 260, QuickMs: 300, FlickDp: 26, StillDp: 7, RearmDp: 110,
+			Style: "simple", FlickSpeed: 0.25,
+			Explore: true, DwellMs: 260, QuickMs: 300, FlickDp: 20, StillDp: 7, RearmDp: 90,
 			RepeatDelayMs: 450, RepeatIntervalMs: 70, KanaOutput: "ime", ImeControl: true,
 		},
 		Haptic: HapticCfg{Enabled: true, HoverMs: 8, ArmMs: 30, DirMs: 6, CommitMs: 14, ToggleMs: 40, Amp: 200},
 		Overlay: OverlayCfg{
-			Width: 520, Opacity: 92, Anchor: "bottom", OffsetX: 0, OffsetY: -40,
+			Width: 300, Opacity: 92, Anchor: "custom", PosX: 0.5, PosY: 0.78, OffsetX: 0, OffsetY: 0,
 			ShowHints: true, ShowHistory: true, MiniMap: true, MiniWidth: 150, MiniAnchor: "bottom-right", Toast: true,
 		},
 		Buttons: ButtonCfg{
@@ -137,6 +147,13 @@ func (c *Config) Normalize() {
 		m.LongPressMs = 200
 	}
 	k := &c.Keyboard
+	if k.Style != "dwell" && k.Style != "flick" {
+		k.Style = "simple"
+	}
+	k.Explore = k.Style == "dwell"
+	if k.FlickSpeed < 0.05 || k.FlickSpeed > 3 {
+		k.FlickSpeed = d.Keyboard.FlickSpeed
+	}
 	if k.DwellMs < 50 {
 		k.DwellMs = 50
 	}
@@ -173,7 +190,10 @@ func (c *Config) Normalize() {
 		o.MiniWidth = 60
 	}
 	if o.Anchor == "" {
-		o.Anchor = "bottom"
+		o.Anchor = "custom"
+	}
+	if o.PosX <= 0 || o.PosX >= 1 || o.PosY <= 0 || o.PosY >= 1 {
+		o.PosX, o.PosY = d.Overlay.PosX, d.Overlay.PosY
 	}
 	if o.MiniAnchor == "" {
 		o.MiniAnchor = "bottom-right"
@@ -230,12 +250,25 @@ func saveJSON(path string, v any) error {
 
 func LoadConfig() *Config {
 	c := DefaultConfig()
+	c.Schema = 0 // ファイルに版番号が無ければ旧版とみなす
 	p := filepath.Join(dataDir(), "config.json")
 	if err := loadJSON(p, c); err != nil {
 		c = DefaultConfig()
-		_ = saveJSON(p, c)
 	}
+	if c.Schema < 2 {
+		// v1 → v2: 入力方式を「かんたん」に、PC表示を小さく
+		d := DefaultConfig()
+		c.Keyboard.Style = d.Keyboard.Style
+		c.Keyboard.FlickDp = d.Keyboard.FlickDp
+		c.Keyboard.RearmDp = d.Keyboard.RearmDp
+		c.Overlay.Width = d.Overlay.Width
+		c.Overlay.Anchor = d.Overlay.Anchor
+		c.Overlay.PosX, c.Overlay.PosY = d.Overlay.PosX, d.Overlay.PosY
+		c.Overlay.OffsetX, c.Overlay.OffsetY = 0, 0
+	}
+	c.Schema = configSchema
 	c.Normalize()
+	_ = saveJSON(p, c)
 	return c
 }
 
@@ -246,7 +279,10 @@ func SaveConfig(c *Config) error {
 func LoadLayouts() *Layouts {
 	l := &Layouts{}
 	p := filepath.Join(dataDir(), "layouts.json")
-	if err := loadJSON(p, l); err != nil || len(l.Keyboards) == 0 {
+	if err := loadJSON(p, l); err != nil || len(l.Keyboards) == 0 || l.Schema < layoutSchema {
+		if err == nil && len(l.Keyboards) > 0 {
+			_ = saveJSON(filepath.Join(dataDir(), "layouts.old.json"), l) // 旧配列は退避
+		}
 		l = DefaultLayouts()
 		_ = saveJSON(p, l)
 	}

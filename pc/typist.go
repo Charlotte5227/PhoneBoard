@@ -200,9 +200,8 @@ func (t *Typist) Commit(s string) {
 	t.mu.Lock()
 	defer t.mu.Unlock()
 	if !IsAction(s) {
-		if t.cfg.ImeControl {
-			t.ensureIME()
-		}
+		// 注意: ここで毎回IMEを操作すると入力中（未確定）の文字が確定されて
+		// 変換できなくなるため、IMEの切替はモード切替時(SetKind)だけにする。
 		for len(s) > 0 {
 			r, n := utf8.DecodeRuneInString(s)
 			s = s[n:]

@@ -40,6 +40,7 @@ type Msg struct {
 	Name string  `json:"name"`
 	Pin  string  `json:"pin"`
 	V    int     `json:"v"`
+	Ts   int64   `json:"ts"` // スマホ側のタッチ時刻(ms)
 }
 
 type App struct {
@@ -60,6 +61,7 @@ type App struct {
 	fx, fy     float64
 	wy, wx     float64
 	webURL     string
+	tsOff      int64
 	start      time.Time
 	OpenURL    func(string)
 }
@@ -77,6 +79,7 @@ func NewApp(cfg *Config, lay *Layouts, inj Injector) *App {
 		start: time.Now(),
 	}
 	a.eng = NewEngine(a.onEngine)
+	a.eng.Clock = a.now
 	a.applyLocked()
 	return a
 }
@@ -109,6 +112,7 @@ func (a *App) refreshOverlayLocked() {
 	caps := a.typ.Caps()
 	a.ov.Update(func(m *OverlayData) {
 		m.Cfg = a.cfg.Overlay
+		m.KbStyle = a.cfg.Keyboard.Style
 		m.KbVisible = a.mode == "keyboard" && a.sess != nil
 		m.Layout = kb
 		m.Aspect = aspect
@@ -427,6 +431,17 @@ func (a *App) Handle(s Sender, m *Msg) {
 		if a.mode != "keyboard" {
 			return
 		}
+		// スマホ側の時刻を使う（Wi-Fiの遅延の揺れで速さの判定が狂わないように）
+		if m.Ts > 0 {
+			if m.A == "d" || a.tsOff == 0 {
+				a.tsOff = t - m.Ts
+			}
+			if mt := m.Ts + a.tsOff; mt <= t {
+				t = mt
+			} else {
+				a.tsOff = t - m.Ts
+			}
+		}
 		switch m.A {
 		case "d":
 			a.eng.Down(m.X, m.Y, t)
@@ -581,9 +596,9 @@ func (a *App) TickLoop() {
 	for range tk.C {
 		a.mu.Lock()
 		if a.mode == "keyboard" && a.eng.state != stIdle {
-			before := a.eng.state
+			before := a.eng.Snap()
 			a.eng.Tick(a.now())
-			if a.eng.state != before || a.eng.reps > 0 {
+			if a.eng.Snap() != before {
 				a.refreshOverlayLocked()
 			}
 		}
@@ -668,6 +683,7 @@ func (a *App) Preview(name string) {
 
 type OverlayData struct {
 	Cfg          OverlayCfg
+	KbStyle      string
 	KbVisible    bool
 	Layout       KbLayout
 	Aspect       float64

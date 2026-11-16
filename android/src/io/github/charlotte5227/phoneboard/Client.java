@@ -140,7 +140,9 @@ public class Client {
                 status("接続中… " + h, false);
                 s.setTcpNoDelay(true);
                 s.connect(new InetSocketAddress(h, port), 3000);
-                s.setSoTimeout(15000);
+                s.setSoTimeout(12000);
+                s.setKeepAlive(true);
+                try { s.setTrafficClass(0x10); } catch (Exception ignored) { } // 低遅延
                 sock = s;
                 outq.clear();
                 final Writer out = new OutputStreamWriter(s.getOutputStream(), "UTF-8");
@@ -163,7 +165,7 @@ public class Client {
                             while (sock == s) {
                                 String line = outq.poll(500, TimeUnit.MILLISECONDS);
                                 long now = System.currentTimeMillis();
-                                if (line == null && now - lastSend > 3000) {
+                                if (line == null && now - lastSend > 2000) {
                                     line = "{\"t\":\"ping\"}";
                                 }
                                 if (line != null) {
@@ -236,7 +238,8 @@ public class Client {
                     }
                 }
             }
-            sleepMs(Math.min(1000 + fails * 300, 4000));
+            // 切れた直後はすぐ再接続、失敗が続いたら間隔を空ける
+            sleepMs(fails <= 1 ? 200 : Math.min(500 * fails, 3000));
         }
         connected = false;
     }

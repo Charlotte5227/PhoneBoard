@@ -67,7 +67,11 @@ type MouseZone struct {
 	H      float64 `json:"h"`
 }
 
+// layoutSchema は配列データの版。上げると古い配列を新しい既定配列に置き換える（旧配列は layouts.old.json に退避）。
+const layoutSchema = 2
+
 type Layouts struct {
+	Schema     int         `json:"schema"`
 	Region     Region      `json:"region"`
 	Keyboards  []KbLayout  `json:"keyboards"`
 	MouseZones []MouseZone `json:"mouseZones"`
@@ -159,78 +163,72 @@ func k5(label string, x, y float64, c, l, u, r, d string) Key {
 	return Key{Label: label, X: x, Y: y, W: 1, H: 1, C: c, L: l, U: u, R: r, D: d}
 }
 
-// 片手（親指）操作を想定した既定の配列。5列×4行のiPhone風配置。
-// 左列: カーソル/モード、中央3列: 文字、右列: 削除/変換/改行。
-func sideKeys(modeLabel string) []Key {
-	bs := k5("削除", 4, 0, "{BS}", "{CTRL+BS}", "{ESC}", "{DEL}", "")
+// 片手（親指）操作を想定した既定の配列。4列×4行のコンパクト配置。
+// 左3列: 文字、右列: 削除 / 変換(空白) / 改行 / 配列切替。
+func funcKeys(spaceLabel, modeLabel string) []Key {
+	bs := k5("削除", 3, 0, "{BS}", "", "{CTRL+Z}", "{DEL}", "")
 	bs.Repeat = true
-	left := k5("←", 0, 0, "{LEFT}", "{HOME}", "{UP}", "{RIGHT}", "{DOWN}")
-	left.Repeat = true
-	right := k5("→", 0, 1, "{RIGHT}", "{LEFT}", "{UP}", "{END}", "{DOWN}")
-	right.Repeat = true
-	enter := Key{Label: "改行", X: 4, Y: 2, W: 1, H: 2, C: "{ENTER}", U: "{SHIFT+ENTER}", L: "{TAB}", R: "{CTRL+ENTER}", D: "{ESC}"}
+	sp := k5(spaceLabel, 3, 1, "{SPACE}", "{LEFT}", "{UP}", "{RIGHT}", "{DOWN}")
 	return []Key{
-		left, right,
-		k5(modeLabel, 0, 2, "{MODE_NEXT}", "{MODE:kana}", "{MODE:alpha}", "{MODE:num}", "{MOUSE}"),
-		k5("編集", 0, 3, "{CTRL+V}", "{CTRL+X}", "{CTRL+C}", "{CTRL+A}", "{CTRL+Z}"),
-		bs,
-		k5("空白", 4, 1, "{SPACE}", "{F6}", "{F7}", "{F10}", "{TAB}"),
-		enter,
+		bs, sp,
+		k5("改行", 3, 2, "{ENTER}", "{TAB}", "{F7}", "{F10}", "{ESC}"),
+		k5(modeLabel, 3, 3, "{MODE_NEXT}", "{MODE:kana}", "{MODE:alpha}", "{MODE:num}", "{MOUSE}"),
 	}
 }
 
 func DefaultLayouts() *Layouts {
-	kana := KbLayout{Name: "kana", Title: "かな", Kind: "kana", Cols: 5, Rows: 4}
-	kana.Keys = append(sideKeys("ABC\n123"),
-		k5("あ", 1, 0, "あ", "い", "う", "え", "お"),
-		k5("か", 2, 0, "か", "き", "く", "け", "こ"),
-		k5("さ", 3, 0, "さ", "し", "す", "せ", "そ"),
-		k5("た", 1, 1, "た", "ち", "つ", "て", "と"),
-		k5("な", 2, 1, "な", "に", "ぬ", "ね", "の"),
-		k5("は", 3, 1, "は", "ひ", "ふ", "へ", "ほ"),
-		k5("ま", 1, 2, "ま", "み", "む", "め", "も"),
-		k5("や", 2, 2, "や", "「", "ゆ", "」", "よ"),
-		k5("ら", 3, 2, "ら", "り", "る", "れ", "ろ"),
-		k5("゛゜小", 1, 3, "{CYCLE}", "", "{DAKU}", "{HANDAKU}", "{SMALL}"),
-		k5("わ", 2, 3, "わ", "を", "ん", "ー", "〜"),
-		k5("、。?!", 3, 3, "、", "。", "？", "！", "…"),
-	)
+	kana := KbLayout{Name: "kana", Title: "かな", Kind: "kana", Cols: 4, Rows: 4}
+	kana.Keys = append([]Key{
+		k5("あ", 0, 0, "あ", "い", "う", "え", "お"),
+		k5("か", 1, 0, "か", "き", "く", "け", "こ"),
+		k5("さ", 2, 0, "さ", "し", "す", "せ", "そ"),
+		k5("た", 0, 1, "た", "ち", "つ", "て", "と"),
+		k5("な", 1, 1, "な", "に", "ぬ", "ね", "の"),
+		k5("は", 2, 1, "は", "ひ", "ふ", "へ", "ほ"),
+		k5("ま", 0, 2, "ま", "み", "む", "め", "も"),
+		k5("や", 1, 2, "や", "「", "ゆ", "」", "よ"),
+		k5("ら", 2, 2, "ら", "り", "る", "れ", "ろ"),
+		k5("゛゜小", 0, 3, "{CYCLE}", "", "{DAKU}", "{HANDAKU}", "{SMALL}"),
+		k5("わ", 1, 3, "わ", "を", "ん", "ー", "〜"),
+		k5("、。?!", 2, 3, "、", "。", "？", "！", "…"),
+	}, funcKeys("変換", "ABC")...)
 
-	alpha := KbLayout{Name: "alpha", Title: "ABC", Kind: "alpha", Cols: 5, Rows: 4}
-	alpha.Keys = append(sideKeys("123\nかな"),
-		k5("@#/&_", 1, 0, "@", "#", "/", "&", "_"),
-		k5("ABC", 2, 0, "a", "b", "c", "", ""),
-		k5("DEF", 3, 0, "d", "e", "f", "", ""),
-		k5("GHI", 1, 1, "g", "h", "i", "", ""),
-		k5("JKL", 2, 1, "j", "k", "l", "", ""),
-		k5("MNO", 3, 1, "m", "n", "o", "", ""),
-		k5("PQRS", 1, 2, "p", "q", "r", "s", ""),
-		k5("TUV", 2, 2, "t", "u", "v", "", ""),
-		k5("WXYZ", 3, 2, "w", "x", "y", "z", ""),
-		k5("a/A", 1, 3, "{CASE}", "", "{CAPS}", "", ""),
-		k5("'\"()", 2, 3, "'", "\"", "(", ")", ""),
-		k5(".,?!", 3, 3, ".", ",", "?", "!", "-"),
-	)
+	alpha := KbLayout{Name: "alpha", Title: "ABC", Kind: "alpha", Cols: 4, Rows: 4}
+	alpha.Keys = append([]Key{
+		k5("@#/&_", 0, 0, "@", "#", "/", "&", "_"),
+		k5("ABC", 1, 0, "a", "b", "c", "", ""),
+		k5("DEF", 2, 0, "d", "e", "f", "", ""),
+		k5("GHI", 0, 1, "g", "h", "i", "", ""),
+		k5("JKL", 1, 1, "j", "k", "l", "", ""),
+		k5("MNO", 2, 1, "m", "n", "o", "", ""),
+		k5("PQRS", 0, 2, "p", "q", "r", "s", ""),
+		k5("TUV", 1, 2, "t", "u", "v", "", ""),
+		k5("WXYZ", 2, 2, "w", "x", "y", "z", ""),
+		k5("a/A", 0, 3, "{CASE}", "", "{CAPS}", "", ""),
+		k5("'\"()", 1, 3, "'", "\"", "(", ")", ""),
+		k5(".,?!", 2, 3, ".", ",", "?", "!", "-"),
+	}, funcKeys("空白", "123")...)
 
-	num := KbLayout{Name: "num", Title: "123", Kind: "num", Cols: 5, Rows: 4}
-	num.Keys = append(sideKeys("かな\nABC"),
-		k5("1", 1, 0, "1", "!", "@", "#", ""),
-		k5("2", 2, 0, "2", "$", "%", "^", ""),
-		k5("3", 3, 0, "3", "&", "*", "~", ""),
-		k5("4", 1, 1, "4", "+", "-", "=", ""),
-		k5("5", 2, 1, "5", "<", ">", "|", ""),
-		k5("6", 3, 1, "6", "(", ")", "\\", ""),
-		k5("7", 1, 2, "7", "[", "]", ":", ""),
-		k5("8", 2, 2, "8", "{", "}", ";", ""),
-		k5("9", 3, 2, "9", "\"", "'", "`", ""),
-		k5("()", 1, 3, "(", ")", "[", "]", ""),
-		k5("0", 2, 3, "0", "_", "~", "?", ""),
-		k5(".,-/", 3, 3, ".", ",", "-", "/", ""),
-	)
+	num := KbLayout{Name: "num", Title: "123", Kind: "num", Cols: 4, Rows: 4}
+	num.Keys = append([]Key{
+		k5("1", 0, 0, "1", "!", "@", "#", ""),
+		k5("2", 1, 0, "2", "$", "%", "^", ""),
+		k5("3", 2, 0, "3", "&", "*", "~", ""),
+		k5("4", 0, 1, "4", "+", "-", "=", ""),
+		k5("5", 1, 1, "5", "<", ">", "|", ""),
+		k5("6", 2, 1, "6", "(", ")", "\\", ""),
+		k5("7", 0, 2, "7", "[", "]", ":", ""),
+		k5("8", 1, 2, "8", "{", "}", ";", ""),
+		k5("9", 2, 2, "9", "\"", "'", "`", ""),
+		k5("()", 0, 3, "(", ")", "[", "]", ""),
+		k5("0", 1, 3, "0", "_", "~", "?", ""),
+		k5(".,-/", 2, 3, ".", ",", "-", "/", ""),
+	}, funcKeys("空白", "かな")...)
 
 	return &Layouts{
-		// 右手親指が届きやすい画面下側に配置
-		Region:    Region{X: 0, Y: 0.42, W: 1, H: 0.58},
+		Schema: layoutSchema,
+		// 右手の親指が届きやすい右下に、小さめに配置
+		Region:    Region{X: 0.25, Y: 0.70, W: 0.75, H: 0.30},
 		Keyboards: []KbLayout{kana, alpha, num},
 		MouseZones: []MouseZone{
 			{Type: "pad", Label: "パッド", X: 0, Y: 0, W: 0.8, H: 0.82},
