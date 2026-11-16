@@ -26,6 +26,7 @@ type MouseCfg struct {
 }
 
 type KeyboardCfg struct {
+	Input            string  `json:"input"`            // gboard: スマホのキーボードをそのまま使う / flick: PhoneBoardのフリック
 	Style            string  `json:"style"`            // simple: なぞって離すと入力 / dwell: 止めて確定待機 / flick: 普通のフリック
 	FlickSpeed       float64 `json:"flickSpeed"`       // simple: これより速い動きをフリックとみなす(dp/ms)
 	Explore          bool    `json:"explore"`          // 探り操作（なぞって位置を探し、止めて確定待機）
@@ -74,7 +75,7 @@ type ButtonCfg struct {
 }
 
 // configSchema は設定形式の版。上げると古い既定値を新しい既定値に置き換える。
-const configSchema = 2
+const configSchema = 3
 
 type Config struct {
 	Schema      int         `json:"schema"`
@@ -103,7 +104,7 @@ func DefaultConfig() *Config {
 			RightClickOneShot: true,
 		},
 		Keyboard: KeyboardCfg{
-			Style: "simple", FlickSpeed: 0.25,
+			Input: "gboard", Style: "simple", FlickSpeed: 0.25,
 			Explore: true, DwellMs: 260, QuickMs: 300, FlickDp: 20, StillDp: 7, RearmDp: 90,
 			RepeatDelayMs: 450, RepeatIntervalMs: 70, KanaOutput: "ime", ImeControl: true,
 		},
@@ -147,6 +148,9 @@ func (c *Config) Normalize() {
 		m.LongPressMs = 200
 	}
 	k := &c.Keyboard
+	if k.Input != "flick" {
+		k.Input = "gboard"
+	}
 	if k.Style != "dwell" && k.Style != "flick" {
 		k.Style = "simple"
 	}
@@ -265,6 +269,10 @@ func LoadConfig() *Config {
 		c.Overlay.Anchor = d.Overlay.Anchor
 		c.Overlay.PosX, c.Overlay.PosY = d.Overlay.PosX, d.Overlay.PosY
 		c.Overlay.OffsetX, c.Overlay.OffsetY = 0, 0
+	}
+	if c.Schema < 3 {
+		// v2 → v3: スマホのキーボード(Gboard)入力を既定に
+		c.Keyboard.Input = "gboard"
 	}
 	c.Schema = configSchema
 	c.Normalize()

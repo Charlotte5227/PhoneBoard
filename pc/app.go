@@ -41,6 +41,7 @@ type Msg struct {
 	Pin  string  `json:"pin"`
 	V    int     `json:"v"`
 	Ts   int64   `json:"ts"` // スマホ側のタッチ時刻(ms)
+	Text string  `json:"text"`
 }
 
 type App struct {
@@ -113,6 +114,7 @@ func (a *App) refreshOverlayLocked() {
 	a.ov.Update(func(m *OverlayData) {
 		m.Cfg = a.cfg.Overlay
 		m.KbStyle = a.cfg.Keyboard.Style
+		m.Input = a.cfg.Keyboard.Input
 		m.KbVisible = a.mode == "keyboard" && a.sess != nil
 		m.Layout = kb
 		m.Aspect = aspect
@@ -325,7 +327,11 @@ func (a *App) setModeLocked(m string) {
 	a.mode = m
 	a.eng.Cancel()
 	a.releaseHeldLocked()
-	if m == "keyboard" {
+	if m == "keyboard" && a.gboard() {
+		a.typ.SetKind("direct") // PCのIMEはOFFに（変換はスマホ側で済ませる）
+		a.ov.Update(func(o *OverlayData) { o.Comp = "" })
+		a.toast("キーボード（スマホ）")
+	} else if m == "keyboard" {
 		a.typ.SetKind(a.curKb().Kind)
 		a.toast("キーボード: " + a.curKb().Title)
 	} else {
@@ -335,6 +341,8 @@ func (a *App) setModeLocked(m string) {
 	a.send(map[string]any{"t": "setmode", "m": m})
 	a.refreshOverlayLocked()
 }
+
+func (a *App) gboard() bool { return a.cfg.Keyboard.Input == "gboard" }
 
 func (a *App) releaseHeldLocked() {
 	for b := range a.held {
@@ -373,6 +381,7 @@ func (a *App) sendCfgLocked() {
 			"miniMap": a.cfg.Overlay.MiniMap,
 		},
 		"kb": map[string]any{
+			"input": a.cfg.Keyboard.Input,
 			"title": kb.Title, "cols": kb.Cols, "rows": kb.Rows, "keys": keys, "region": a.lay.Region,
 		},
 		"haptic": a.cfg.Haptic.Enabled,
@@ -536,6 +545,23 @@ func (a *App) Handle(s Sender, m *Msg) {
 			a.phone.Wdp, a.phone.Hdp = m.Wdp, m.Hdp
 			a.applyLocked()
 		}
+	case "comp": // スマホのキーボードで変換中の文字
+		a.ov.Update(func(o *OverlayData) { o.Comp = m.Text })
+	case "text": // スマホのキーボードで確定した文字
+		a.ov.Update(func(o *OverlayData) { o.Comp = "" })
+		if m.Text != "" {
+			a.typ.CommitDirect(m.Text)
+			a.ov.Update(func(o *OverlayData) {
+				o.Flash = strings.ReplaceAll(m.Text, "\n", "⏎")
+				o.FlashAt = time.Now()
+			})
+			a.refreshOverlayLocked()
+		}
+	case "key": // スマホのキーボードの特殊キー（BS/ENTER/矢印など）
+		if _, _, ok := ParseCombo(strings.ToUpper(m.K)); ok {
+			a.typ.Commit("{" + strings.ToUpper(m.K) + "}")
+			a.refreshOverlayLocked()
+		}
 	case "ping":
 		a.send(map[string]any{"t": "pong"})
 	}
@@ -684,6 +710,8 @@ func (a *App) Preview(name string) {
 type OverlayData struct {
 	Cfg          OverlayCfg
 	KbStyle      string
+	Input        string
+	Comp         string
 	KbVisible    bool
 	Layout       KbLayout
 	Aspect       float64

@@ -37,6 +37,7 @@ public class MainActivity extends Activity implements Client.Listener, PadView.H
 
     private Client client;
     private PadView pad;
+    private CaptureEdit capture;
     private ScrollView setup;
     private TextView statusView;
     private LinearLayout foundList;
@@ -69,6 +70,32 @@ public class MainActivity extends Activity implements Client.Listener, PadView.H
         root.setBackgroundColor(Color.BLACK);
         pad = new PadView(this, this);
         root.addView(pad, new FrameLayout.LayoutParams(-1, -1));
+        // Gboard等の入力を受け取る見えない入力欄（1px）
+        capture = new CaptureEdit(this);
+        capture.setSink(new CaptureEdit.Sink() {
+            public void onComposing(String text) { sendText("comp", text); }
+            public void onCommit(String text) { sendText("text", text); }
+            public void onKey(String name) {
+                try {
+                    JSONObject o = new JSONObject();
+                    o.put("t", "key");
+                    o.put("k", name);
+                    client.send(o);
+                } catch (Exception ignored) {
+                }
+            }
+            public void onBack() {
+                // キーボードを閉じたらマウスに戻る
+                try {
+                    JSONObject o = new JSONObject();
+                    o.put("t", "act");
+                    o.put("a", "{MOUSE}");
+                    client.send(o);
+                } catch (Exception ignored) {
+                }
+            }
+        });
+        root.addView(capture, new FrameLayout.LayoutParams(1, 1));
         setup = buildSetup();
         root.addView(setup, new FrameLayout.LayoutParams(-1, -1));
         setContentView(root);
@@ -230,7 +257,7 @@ public class MainActivity extends Activity implements Client.Listener, PadView.H
                 "・音量↑ : マウス ⇔ キーボード\n" +
                 "・マウス : なぞる=カーソル / タップ=左クリック / 右端の帯=スクロール / 下段=キーボード・左右切替・右クリック。音量↓を押している間は左ボタン押しっぱなし\n" +
                 "・ダブルタップしてそのままなぞる=ドラッグ\n" +
-                "・キーボード : 指を置いてなぞると、PC画面に指の位置とキーが表示されます。指を止めると振動（確定待機）→ はじいた方向の文字を、離した時に入力。止める前に離すと取り消し\n" +
+                "・キーボード : スマホのキーボード（Gboard等）がそのまま開きます。変換中の文字はPC画面に表示され、確定するとPCに入力されます。キーボードを閉じる（戻る）とマウスに戻ります\n" +
                 "・画面の左上隅を2秒長押し : この画面\n" +
                 "・配置や動作はPCの設定画面（タスクトレイのアイコン）で変更できます",
                 14, false);
@@ -291,6 +318,7 @@ public class MainActivity extends Activity implements Client.Listener, PadView.H
     private void showSetup(boolean show) {
         setup.setVisibility(show ? View.VISIBLE : View.GONE);
         if (!show) hideKeyboard();
+        if (capture != null && pad != null && client != null) updatePhoneKeyboard();
         backButton.setVisibility(client != null && client.isConnected() ? View.VISIBLE : View.GONE);
         applyBrightness();
         hideSystemUi();
@@ -301,6 +329,41 @@ public class MainActivity extends Activity implements Client.Listener, PadView.H
         boolean dim = prefs.getBoolean("dim", true) && setup.getVisibility() != View.VISIBLE && client != null && client.isConnected();
         lp.screenBrightness = dim ? 0.01f : WindowManager.LayoutParams.BRIGHTNESS_OVERRIDE_NONE;
         getWindow().setAttributes(lp);
+    }
+
+    private void sendText(String t, String text) {
+        try {
+            JSONObject o = new JSONObject();
+            o.put("t", t);
+            o.put("text", text);
+            client.send(o);
+        } catch (Exception ignored) {
+        }
+    }
+
+    /** モードに合わせてスマホのキーボード（Gboard等）を出す/しまう */
+    private void updatePhoneKeyboard() {
+        final InputMethodManager imm = (InputMethodManager) getSystemService(Context.INPUT_METHOD_SERVICE);
+        if (imm == null) return;
+        boolean want = pad.usesPhoneKeyboard() && client.isConnected() && setup.getVisibility() != View.VISIBLE;
+        if (want) {
+            capture.setFocusable(true);
+            capture.setFocusableInTouchMode(true);
+            capture.requestFocus();
+            Runnable show = new Runnable() {
+                public void run() {
+                    if (!pad.usesPhoneKeyboard()) return;
+                    capture.requestFocus();
+                    imm.showSoftInput(capture, 0);
+                }
+            };
+            capture.postDelayed(show, 120);
+            capture.postDelayed(show, 500); // 1回目で開かない端末向け
+        } else if (capture.hasFocus()) {
+            imm.hideSoftInputFromWindow(capture.getWindowToken(), 0);
+            capture.clearFocus();
+            capture.setFocusable(false);
+        }
     }
 
     // ===== Client.Listener =====
@@ -338,8 +401,10 @@ public class MainActivity extends Activity implements Client.Listener, PadView.H
         String t = m.optString("t");
         if ("cfg".equals(t)) {
             pad.applyCfg(m);
+            updatePhoneKeyboard();
         } else if ("setmode".equals(t)) {
             pad.setMode(m.optString("m", "mouse"));
+            updatePhoneKeyboard();
         } else if ("state".equals(t)) {
             pad.setState(m);
         } else if ("vib".equals(t)) {

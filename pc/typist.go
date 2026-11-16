@@ -274,6 +274,29 @@ func (t *Typist) Commit(s string) {
 	}
 }
 
+// CommitDirect はスマホのキーボード（Gboard等）で確定した文字列をそのまま入力する。
+// PCのIMEは通さない（スマホ側で変換済み）。
+func (t *Typist) CommitDirect(s string) {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	for _, r := range s {
+		switch {
+		case r == '\n' || r == '\r':
+			t.inj.KeyCombo(nil, vkReturn)
+			t.history = append(t.history, '⏎')
+		case r == '\t':
+			t.inj.KeyCombo(nil, vkTab)
+		case r < 128 && unicode.IsPrint(r):
+			t.inj.TypeASCII(string(r))
+			t.pushHist(r)
+		default:
+			t.inj.TypeUnicode(r)
+			t.pushHist(r)
+		}
+	}
+	t.lastOK = false
+}
+
 func (t *Typist) Caps() bool {
 	t.mu.Lock()
 	defer t.mu.Unlock()

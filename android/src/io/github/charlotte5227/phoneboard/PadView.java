@@ -57,6 +57,8 @@ public class PadView extends View {
     private int kbCols = 5, kbRows = 4;
     private float rx = 0, ry = 0.42f, rw = 1, rh = 0.58f;
     private String kbTitle = "";
+    private String kbInput = "gboard";
+    private final List<Zone> gboardZones = new ArrayList<Zone>();
     private boolean tapDrag = true;
     private int tapDelayMs = 220;
     private String longPress = "none";
@@ -91,6 +93,10 @@ public class PadView extends View {
         Zone z = new Zone();
         z.type = "pad"; z.label = "パッド"; z.x = 0; z.y = 0; z.w = 1; z.h = 1;
         zones.add(z);
+        // スマホのキーボード表示中は、上に見えている部分全体をマウスパッドにする
+        Zone g = new Zone();
+        g.type = "pad"; g.label = "マウスパッド"; g.x = 0; g.y = 0; g.w = 1; g.h = 1;
+        gboardZones.add(g);
         setKeepScreenOn(true);
     }
 
@@ -126,6 +132,7 @@ public class PadView extends View {
             JSONObject kb = m.optJSONObject("kb");
             if (kb != null) {
                 kbTitle = kb.optString("title", "");
+                kbInput = kb.optString("input", "gboard");
                 kbCols = Math.max(1, kb.optInt("cols", 5));
                 kbRows = Math.max(1, kb.optInt("rows", 4));
                 JSONObject r = kb.optJSONObject("region");
@@ -154,6 +161,16 @@ public class PadView extends View {
         }
         invalidate();
     }
+
+    public String getMode() { return mode; }
+
+    /** スマホのキーボード（Gboard等）で入力するモードか */
+    public boolean usesPhoneKeyboard() { return "keyboard".equals(mode) && "gboard".equals(kbInput); }
+
+    /** タッチを PhoneBoard のフリック（PC側判定）として送るか */
+    private boolean flickTouch() { return "keyboard".equals(mode) && !"gboard".equals(kbInput); }
+
+    private List<Zone> zonesNow() { return usesPhoneKeyboard() ? gboardZones : zones; }
 
     public void setState(JSONObject m) {
         tapRight = m.optBoolean("tapRight", false);
@@ -295,6 +312,7 @@ public class PadView extends View {
 
     private int zoneAt(float x, float y) {
         float fx = x / Math.max(1, getWidth()), fy = y / Math.max(1, getHeight());
+        List<Zone> zones = zonesNow();
         for (int i = zones.size() - 1; i >= 0; i--) {
             Zone z = zones.get(i);
             if (fx >= z.x && fx < z.x + z.w && fy >= z.y && fy < z.y + z.h) return i;
@@ -306,9 +324,10 @@ public class PadView extends View {
         handler.removeCallbacks(cornerHold);
         handler.removeCallbacks(longPressRun);
         if (activeId >= 0) {
-            if ("keyboard".equals(mode)) {
+            if (flickTouch()) {
                 send("t", "kt", "a", "c");
             } else {
+                List<Zone> zones = zonesNow();
                 if (dragging) send("t", "mb", "b", "l", "a", "up");
                 if (zoneIdx >= 0 && zoneIdx < zones.size() && "button".equals(zones.get(zoneIdx).type)) {
                     send("t", "btn", "a", zones.get(zoneIdx).action, "s", "up");
@@ -378,7 +397,7 @@ public class PadView extends View {
         longFired = false;
         dragging = false;
         if (!connected) return;
-        if ("keyboard".equals(mode)) {
+        if (flickTouch()) {
             sendTouch("kt", "d", x, y, -2);
             return;
         }
@@ -386,7 +405,7 @@ public class PadView extends View {
         zoneIdx = zoneAt(x, y);
         if (miniMap) sendTouch("mt", "d", x, y, zoneIdx);
         if (zoneIdx < 0) return;
-        Zone z = zones.get(zoneIdx);
+        Zone z = zonesNow().get(zoneIdx);
         if ("pad".equals(z.type)) {
             if (pendingClick != null) {
                 handler.removeCallbacks(pendingClick);
@@ -407,7 +426,7 @@ public class PadView extends View {
     private void move(float x, float y) {
         if (!connected) return;
         long now = SystemClock.uptimeMillis();
-        if ("keyboard".equals(mode)) {
+        if (flickTouch()) {
             sendTouch("kt", "m", x, y, -2);
             return;
         }
@@ -416,7 +435,7 @@ public class PadView extends View {
             sendTouch("mt", "m", x, y, zoneIdx);
         }
         if (zoneIdx < 0) return;
-        Zone z = zones.get(zoneIdx);
+        Zone z = zonesNow().get(zoneIdx);
         float dx = (x - lastX) / dens, dy = (y - lastY) / dens;
         if ("pad".equals(z.type)) {
             if (!moved) {
@@ -450,13 +469,13 @@ public class PadView extends View {
         handler.removeCallbacks(longPressRun);
         if (!connected) return;
         long now = SystemClock.uptimeMillis();
-        if ("keyboard".equals(mode)) {
+        if (flickTouch()) {
             sendTouch("kt", "u", x, y, -2);
             return;
         }
         if (miniMap) sendTouch("mt", "u", x, y, zoneIdx);
         if (zoneIdx < 0) return;
-        Zone z = zones.get(zoneIdx);
+        Zone z = zonesNow().get(zoneIdx);
         if ("pad".equals(z.type)) {
             boolean tap = !moved && now - downT < 350;
             if (dragging) {
@@ -498,7 +517,11 @@ public class PadView extends View {
         int w = getWidth(), h = getHeight();
         c.drawColor(Color.BLACK);
         float r = 10 * dens;
-        if ("keyboard".equals(mode)) {
+        if (usesPhoneKeyboard()) {
+            text.setTextSize(15 * dens);
+            c.drawText("スマホのキーボードで入力中", w / 2f, h * 0.12f, text);
+            c.drawText("（この部分はマウスパッド / 音量↑でマウスへ）", w / 2f, h * 0.12f + 22 * dens, text);
+        } else if ("keyboard".equals(mode)) {
             float ox = rx * w, oy = ry * h, ow = rw * w, oh = rh * h;
             float cw = ow / kbCols, ch = oh / kbRows;
             text.setTextSize(Math.min(cw, ch) * 0.3f);

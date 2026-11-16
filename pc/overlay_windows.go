@@ -424,7 +424,21 @@ func (u *ui) tick() {
 
 	// キーボード表示
 	kbShow := d.KbVisible || preview
-	if kbShow {
+	if kbShow && d.Input == "gboard" {
+		// スマホのキーボード使用時: 変換中の文字を表示する細長い表示
+		w := int32(float64(c.Width) * 1.5 * scale)
+		if w < int32(360*scale) {
+			w = int32(360 * scale)
+		}
+		h := int32(104 * scale)
+		var x, y int32
+		if c.Anchor == "custom" {
+			x, y = placeCustom(c.PosX, c.PosY, wa, w, h)
+		} else {
+			x, y = place(c.Anchor, wa, w, h, int32(float64(c.OffsetX)*scale), int32(float64(c.OffsetY)*scale))
+		}
+		u.show(u.kb, x, y, w, h, c.Opacity, changed || anim)
+	} else if kbShow {
 		w := int32(float64(c.Width) * scale)
 		header := int32(40 * scale)
 		pad := int32(8 * scale)
@@ -642,8 +656,50 @@ var (
 	colDot     = rgb(255, 70, 90)
 )
 
+func (u *ui) paintComp(c *canvas, cw, ch int32) {
+	d := &u.data
+	c.round(0, 0, cw, ch, u.px(14), colBg, rgb(70, 70, 90), 1)
+	pad := u.px(10)
+	head := u.px(34)
+	c.round(pad, u.px(7), u.px(84), head-u.px(12), u.px(10), rgb(60, 90, 200), 0, 0)
+	c.text("スマホ入力", pad, u.px(7), u.px(84), head-u.px(12), int(u.px(13)), colText, true, dtCenter)
+	if d.Cfg.ShowHistory {
+		hist := []rune(d.History)
+		if len(hist) > 24 {
+			hist = hist[len(hist)-24:]
+		}
+		c.text(string(hist), pad+u.px(94), 0, cw-2*pad-u.px(94), head, int(u.px(14)), colSub, false, dtRight)
+	}
+	// 変換中の文字（大きく）。長い時は後ろ側を表示
+	box := rect{pad, head, cw - pad, ch - pad}
+	c.round(box.L, box.T, box.R-box.L, box.B-box.T, u.px(10), rgb(36, 37, 46), 0, 0)
+	comp := []rune(d.Comp)
+	txt, col := string(comp), colHoverBd
+	if len(comp) > 16 {
+		txt = "…" + string(comp[len(comp)-15:])
+	}
+	if len(comp) == 0 {
+		txt, col = "（スマホのキーボードで入力）", colSub
+		if time.Since(d.FlashAt) < 900*time.Millisecond && d.Flash != "" {
+			txt, col = "入力 "+d.Flash, colArmBd
+		}
+		if !d.Connected {
+			txt = "プレビュー（未接続）"
+		}
+	}
+	fs := int(u.px(30))
+	if len(comp) == 0 {
+		fs = int(u.px(18))
+	}
+	c.text(txt, box.L+u.px(12), box.T, box.R-box.L-u.px(24), box.B-box.T, fs, col, true, dtLeft)
+}
+
 func (u *ui) paintKb(c *canvas, cw, ch int32) {
 	d := &u.data
+	if d.Input == "gboard" {
+		u.paintComp(c, cw, ch)
+		return
+	}
 	kb := &d.Layout
 	c.round(0, 0, cw, ch, u.px(14), colBg, rgb(70, 70, 90), 1)
 	header := u.px(40)
