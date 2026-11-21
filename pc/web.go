@@ -9,6 +9,7 @@ import (
 	"net"
 	"net/http"
 	"strings"
+	"time"
 )
 
 //go:embed web/index.html
@@ -98,6 +99,19 @@ func RunWeb(app *App, port int, ready chan<- string) {
 		}
 		app.Preview()
 		writeJSON(w, map[string]bool{"ok": true})
+	})
+	// 新しい版を起動した時に、古い版（このプロセス）に終了を頼むためのAPI
+	mux.HandleFunc("/api/quit", func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost {
+			http.Error(w, "POST only", 405)
+			return
+		}
+		writeJSON(w, map[string]bool{"ok": true})
+		log.Printf("quit requested by a new instance")
+		go func() {
+			time.Sleep(100 * time.Millisecond)
+			RequestQuit()
+		}()
 	})
 	mux.HandleFunc("/api/calib/reset", func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodPost {

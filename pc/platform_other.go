@@ -2,7 +2,10 @@
 
 package main
 
-import "log"
+import (
+	"log"
+	"os"
+)
 
 func NewInjector() Injector { return &LogInjector{} }
 
@@ -15,6 +18,8 @@ func (nullClicker) Play(group string, semi int, volume int) {
 func NewClicker() Clicker { return nullClicker{} }
 
 func acquireSingleInstance() bool { return true }
+func killOtherInstances() bool    { return false }
+func RequestQuit()                { os.Exit(0) }
 func initPlatform()               {}
 func openBrowser(url string)      { log.Printf("open %s", url) }
 func RunUI(app *App)              { select {} }

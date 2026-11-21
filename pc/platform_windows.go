@@ -4,6 +4,8 @@ package main
 
 import (
 	"log"
+	"os"
+	"strings"
 	"syscall"
 	"unicode/utf16"
 	"unsafe"
@@ -34,6 +36,12 @@ var (
 	pSetProcessDPIAware            = user32.NewProc("SetProcessDPIAware")
 	pImmGetDefaultIMEWnd           = imm32.NewProc("ImmGetDefaultIMEWnd")
 	pCreateMutexW                  = kernel32.NewProc("CreateMutexW")
+	pCloseHandle                   = kernel32.NewProc("CloseHandle")
+	pCreateToolhelp32Snapshot      = kernel32.NewProc("CreateToolhelp32Snapshot")
+	pProcess32FirstW               = kernel32.NewProc("Process32FirstW")
+	pProcess32NextW                = kernel32.NewProc("Process32NextW")
+	pOpenProcess                   = kernel32.NewProc("OpenProcess")
+	pTerminateProcess              = kernel32.NewProc("TerminateProcess")
 	pShellExecuteW                 = shell32.NewProc("ShellExecuteW")
 )
 
@@ -304,11 +312,55 @@ var instanceMutex uintptr
 func acquireSingleInstance() bool {
 	name, _ := syscall.UTF16PtrFromString("Local\\PhoneBoardPC_SingleInstance")
 	h, _, err := pCreateMutexW.Call(0, 0, uintptr(unsafe.Pointer(name)))
-	instanceMutex = h
 	if errno, ok := err.(syscall.Errno); ok && errno == errorAlreadyExists {
+		if h != 0 {
+			pCloseHandle.Call(h)
+		}
 		return false
 	}
+	instanceMutex = h
 	return true
+}
+
+type processEntry32 struct {
+	Size            uint32
+	Usage           uint32
+	ProcessID       uint32
+	DefaultHeapID   uintptr
+	ModuleID        uint32
+	Threads         uint32
+	ParentProcessID uint32
+	PriClassBase    int32
+	Flags           uint32
+	ExeFile         [260]uint16
+}
+
+// killOtherInstances は自分以外の PhoneBoard*.exe を終了させる（古い版の入れ替え用）。
+func killOtherInstances() bool {
+	snap, _, _ := pCreateToolhelp32Snapshot.Call(2, 0) // TH32CS_SNAPPROCESS
+	if snap == ^uintptr(0) || snap == 0 {
+		return false
+	}
+	defer pCloseHandle.Call(snap)
+	self := uint32(os.Getpid())
+	killed := false
+	var pe processEntry32
+	pe.Size = uint32(unsafe.Sizeof(pe))
+	for r, _, _ := pProcess32FirstW.Call(snap, uintptr(unsafe.Pointer(&pe))); r != 0; r, _, _ = pProcess32NextW.Call(snap, uintptr(unsafe.Pointer(&pe))) {
+		name := strings.ToLower(syscall.UTF16ToString(pe.ExeFile[:]))
+		if pe.ProcessID == self || !strings.HasPrefix(name, "phoneboard") || !strings.HasSuffix(name, ".exe") {
+			continue
+		}
+		h, _, _ := pOpenProcess.Call(0x0001, 0, uintptr(pe.ProcessID)) // PROCESS_TERMINATE
+		if h != 0 {
+			if r, _, _ := pTerminateProcess.Call(h, 0); r != 0 {
+				killed = true
+				log.Printf("terminated old instance pid=%d (%s)", pe.ProcessID, name)
+			}
+			pCloseHandle.Call(h)
+		}
+	}
+	return killed
 }
 
 func initPlatform() {

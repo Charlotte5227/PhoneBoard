@@ -85,6 +85,7 @@ const (
 	wmTimer         = 0x0113
 	wmApp           = 0x8000
 	wmTray          = wmApp + 1
+	wmQuit          = wmApp + 2
 	wmLButtonUp     = 0x0202
 	wmLButtonDblClk = 0x0203
 	wmRButtonUp     = 0x0205
@@ -260,7 +261,7 @@ func (u *ui) addTray() {
 		icon, _, _ = pLoadIconW.Call(0, 32512)
 	}
 	u.nid.HIcon = icon
-	u.setTip("PhoneBoard（未接続）")
+	u.setTip("PhoneBoard " + Version + "（未接続）")
 	pShellNotifyIconW.Call(nimAdd, uintptr(unsafe.Pointer(&u.nid)))
 }
 
@@ -289,6 +290,15 @@ func (u *ui) trayMenu() {
 	case 3:
 		pPostQuitMessage.Call(0)
 	}
+}
+
+// RequestQuit はタスクトレイのアイコンを消して終了する（別スレッドから呼べる）。
+func RequestQuit() {
+	if u := theUI; u != nil && u.main != 0 {
+		pPostMessageW.Call(u.main, wmQuit, 0, 0)
+		time.Sleep(2 * time.Second) // 念のため
+	}
+	os.Exit(0)
 }
 
 func (u *ui) openSettings() {
@@ -325,6 +335,9 @@ func wndProc(hwnd, msg, wparam, lparam uintptr) uintptr {
 			u.tick()
 			return 0
 		}
+	case wmQuit:
+		pPostQuitMessage.Call(0)
+		return 0
 	case wmTray:
 		switch lparam & 0xffff {
 		case wmLButtonUp, wmLButtonDblClk:
@@ -422,9 +435,9 @@ func (u *ui) tick() {
 	if d.Connected != u.tipConn {
 		u.tipConn = d.Connected
 		if d.Connected {
-			u.setTip("PhoneBoard（接続中）")
+			u.setTip("PhoneBoard " + Version + "（接続中）")
 		} else {
-			u.setTip("PhoneBoard（未接続）")
+			u.setTip("PhoneBoard " + Version + "（未接続）")
 		}
 		pShellNotifyIconW.Call(nimModify, uintptr(unsafe.Pointer(&u.nid)))
 	}
