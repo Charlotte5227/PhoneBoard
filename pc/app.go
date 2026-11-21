@@ -636,6 +636,21 @@ func (a *App) Handle(s Sender, m *Msg) {
 		if n < 1 {
 			n = 1
 		}
+		if a.mode == "game" && n == 1 {
+			// ゲームは1フレームより短いクリックを取りこぼすことがあるので、少し押したままにする
+			if a.held[btn] {
+				break
+			}
+			a.inj.MouseButton(btn, true)
+			time.AfterFunc(40*time.Millisecond, func() {
+				a.mu.Lock()
+				defer a.mu.Unlock()
+				if !a.held[btn] {
+					a.inj.MouseButton(btn, false)
+				}
+			})
+			break
+		}
 		for i := 0; i < n && i < 3; i++ {
 			a.inj.MouseButton(btn, true)
 			a.inj.MouseButton(btn, false)

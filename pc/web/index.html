@@ -111,7 +111,7 @@ code{background:var(--panel2);padding:1px 5px;border-radius:4px}
 <section data-tab="マウス"><div class="grid" id="f-mouse"></div></section>
 <section data-tab="ゲーム">
   <div class="grid" id="f-game"></div>
-  <p class="sub"><b>ゲーム画面</b>はスマホの左側に WASD などのキー、右側に視点を動かすパッドとクリックボタンが並ぶ画面です。キーもクリックも<b>押している間ずっと押しっぱなし</b>になり、複数同時に押せます。配置は「マウス・ゲーム画面」タブで「ゲーム画面」を選ぶと変えられます。ボタンのアクションに <code>{W}</code> や <code>{LSHIFT}</code> のようにキーを書くと、そのキーを押しっぱなしにします。</p>
+  <p class="sub"><b>ゲーム画面</b>はスマホの左側に WASD などのキー、右側に視点を動かすパッドとクリックボタンが並ぶ画面です。視点パッドをトンと叩くと左クリックです。キーもクリックボタンも<b>押している間ずっと押しっぱなし</b>になり、複数同時に押せます。配置は「マウス・ゲーム画面」タブで「ゲーム画面」を選ぶと変えられます。ボタンのアクションに <code>{W}</code> や <code>{LSHIFT}</code> のようにキーを書くと、そのキーを押しっぱなしにします。</p>
   <p class="sub">普通のキーボード画面をゲームで使う時は「キーボード」タブの「キーを入力するタイミング」を「押している間押しっぱなし」にしてください。</p>
   <p class="sub"><b>反応しない時</b>: 管理者として動いているゲームには、PCソフトも右クリック→「管理者として実行」で起動しないと入力が届きません。また、チート対策（アンチチート）が仮想入力を拒否するゲームでは使えません。</p>
 </section>
@@ -184,7 +184,7 @@ code{background:var(--panel2);padding:1px 5px;border-radius:4px}
   <div style="display:flex;gap:22px;flex-wrap:wrap;align-items:flex-start">
     <div><canvas id="mcv" width="640" height="300"></canvas><div class="sub">領域をクリックで選択</div></div>
     <div style="flex:1;min-width:340px">
-      <p class="sub"><b>パッド</b>=カーソル移動（タップでクリック、2本指でスクロール）、<b>スクロール</b>=なぞってスクロール、<b>ボタン</b>=触れて離すとアクション（クリック系・キー1つは押している間押しっぱなし）、<b>視点</b>=ゲームの視点操作（なぞった分だけマウスを動かす。タップしてもクリックしない）。画面の端は見なくても指で探せるので、端に配置するのがおすすめです。</p>
+      <p class="sub"><b>パッド</b>=カーソル移動（タップでクリック、2本指でスクロール）、<b>スクロール</b>=なぞってスクロール、<b>ボタン</b>=触れて離すとアクション（クリック系・キー1つは押している間押しっぱなし）、<b>視点</b>=ゲームの視点操作（なぞった分だけマウスを動かす。トンと叩くと左クリック）。画面の端は見なくても指で探せるので、端に配置するのがおすすめです。</p>
       <div class="form2">
         <label>種類<select id="zType"><option value="pad">パッド</option><option value="scroll">スクロール</option><option value="button">ボタン</option><option value="look">視点</option></select></label>
         <label>表示<input id="zLabel"></label>

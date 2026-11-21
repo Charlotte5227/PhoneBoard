@@ -455,7 +455,7 @@ public class PadView extends View {
                 else sendNum("mm", dx, dy);
             }
         } else if (z != null && "look".equals(z.type)) {
-            // ゲームの視点: 指のぶれも含めてそのまま送る（タップでクリックはしない）
+            // ゲームの視点: 指のぶれも含めてそのまま送る（素早いタップは左クリック）
             sendNum("lm", dx, dy);
         } else if (z != null && "scroll".equals(z.type)) {
             sendNum("ms", dx, dy);
@@ -484,6 +484,9 @@ public class PadView extends View {
         if (z == null) return;
         if ("pad".equals(z.type)) {
             padUp(p, now);
+        } else if ("look".equals(z.type)) {
+            // 動かさずに素早く離した → 左クリック（「タップ=右」の切替は無視して常に左）
+            if (!p.moved && now - p.downT < 300) sendTap(1, "l");
         } else if ("scroll".equals(z.type)) {
             if (momentum && now - p.lastT < 60 && Math.hypot(vx, vy) > 0.25) startMomentum();
         } else if ("button".equals(z.type)) {

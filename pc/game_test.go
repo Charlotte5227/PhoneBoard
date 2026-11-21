@@ -4,6 +4,7 @@ import (
 	"os"
 	"strings"
 	"testing"
+	"time"
 )
 
 type nullSender struct{}
@@ -34,6 +35,13 @@ func TestGameButtons(t *testing.T) {
 	want := "down 0x57,down 0xa0,move 15,0,btn 0 true,btn 0 false,up 0x57,up 0xa0"
 	if got != want {
 		t.Fatalf("got  %s\nwant %s", got, want)
+	}
+	// 視点パッドのタップ = 左クリック（少し押してから離す）
+	inj.Ops = nil
+	a.Handle(s, &Msg{T: "tap", N: 1, B: "l"})
+	time.Sleep(80 * time.Millisecond)
+	if got := strings.Join(inj.Ops, ","); got != "btn 0 true,btn 0 false" {
+		t.Fatalf("tap: %s", got)
 	}
 	// 押したまま画面を切り替えたら離す
 	inj.Ops = nil
