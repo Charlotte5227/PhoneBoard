@@ -61,9 +61,6 @@ var (
 	pSetBkMode              = gdi32.NewProc("SetBkMode")
 	pSetTextColor           = gdi32.NewProc("SetTextColor")
 	pCreateFontW            = gdi32.NewProc("CreateFontW")
-	pStretchDIBits          = gdi32.NewProc("StretchDIBits")
-	pSetStretchBltMode      = gdi32.NewProc("SetStretchBltMode")
-	pSetBrushOrgEx          = gdi32.NewProc("SetBrushOrgEx")
 )
 
 const (
@@ -143,21 +140,6 @@ type paintStruct struct {
 	FRestore    int32
 	FIncUpdate  int32
 	RgbReserved [32]byte
-}
-
-type bitmapInfoHeader struct {
-	BiSize          uint32
-	BiWidth         int32
-	BiHeight        int32
-	BiPlanes        uint16
-	BiBitCount      uint16
-	BiCompression   uint32
-	BiSizeImage     uint32
-	BiXPelsPerMeter int32
-	BiYPelsPerMeter int32
-	BiClrUsed       uint32
-	BiClrImportant  uint32
-	_               [4]byte // RGBQUAD[1]
 }
 
 type monitorInfo struct {
@@ -301,7 +283,7 @@ func (u *ui) trayMenu() {
 	case 1:
 		u.openSettings()
 	case 2:
-		u.app.Preview("")
+		u.app.Preview()
 	case 3:
 		pPostQuitMessage.Call(0)
 	}
@@ -427,7 +409,12 @@ func (u *ui) tick() {
 	u.scale = scale
 	c := d.Cfg
 	preview := now.Before(d.PreviewUntil)
-	anim := now.Sub(d.FlashAt) < 800*time.Millisecond
+	anim := false
+	for _, ft := range d.Flash {
+		if now.Sub(ft) < 400*time.Millisecond {
+			anim = true
+		}
+	}
 
 	// トレイのツールチップ
 	if d.Connected != u.tipConn {
@@ -440,52 +427,23 @@ func (u *ui) tick() {
 		pShellNotifyIconW.Call(nimModify, uintptr(unsafe.Pointer(&u.nid)))
 	}
 
-	// キーボード表示
+	// キーボード表示（スマホ画面全体＝キーボードなので、スマホの縦横比で描く）
 	kbShow := d.KbVisible || preview
-	if kbShow && d.Input == "gboard" {
-		// スマホのキーボード使用時: 変換中の文字を表示する細長い表示
-		w := int32(float64(c.Width) * 1.5 * scale)
-		if w < int32(360*scale) {
-			w = int32(360 * scale)
-		}
-		h := int32(104 * scale)
-		if f := d.Frame; f != nil && now.Sub(f.At) < 1500*time.Millisecond && f.W > 0 {
-			// キーボード画面の映像あり
-			ms := d.MirrorScale
-			if ms <= 0 {
-				ms = 1.6
-			}
-			w = int32(float64(c.Width) * ms * scale)
-			ih := int32(float64(w-2*u.px(6)) * float64(f.H) / float64(f.W))
-			maxH := (wa.B - wa.T) * 7 / 10
-			if ih > maxH {
-				ih = maxH
-				w = int32(float64(ih)*float64(f.W)/float64(f.H)) + 2*u.px(6)
-			}
-			h = u.px(50) + ih + u.px(6)
-		}
-		var x, y int32
-		if c.Anchor == "custom" {
-			x, y = placeCustom(c.PosX, c.PosY, wa, w, h)
-		} else {
-			x, y = place(c.Anchor, wa, w, h, int32(float64(c.OffsetX)*scale), int32(float64(c.OffsetY)*scale))
-		}
-		u.show(u.kb, x, y, w, h, c.Opacity, changed || anim)
-	} else if kbShow {
+	if kbShow {
 		w := int32(float64(c.Width) * scale)
-		header := int32(40 * scale)
-		pad := int32(8 * scale)
+		header := u.px(30)
+		pad := u.px(6)
 		aspect := d.Aspect
-		if aspect <= 0.1 {
-			aspect = 1.2
+		if aspect <= 0.3 {
+			aspect = 2.2
 		}
 		kh := int32(float64(w-2*pad) / aspect)
-		maxH := (wa.B - wa.T) * 45 / 100
+		maxH := (wa.B - wa.T) * 50 / 100
 		if kh > maxH {
 			kh = maxH
 			w = int32(float64(kh)*aspect) + 2*pad
 		}
-		h := header + kh + 2*pad
+		h := header + kh + pad
 		var x, y int32
 		if c.Anchor == "custom" {
 			x, y = placeCustom(c.PosX, c.PosY, wa, w, h)
@@ -501,9 +459,9 @@ func (u *ui) tick() {
 	miniShow := c.MiniMap && !kbShow && len(d.Zones) > 0 &&
 		((d.Connected && (d.MiniTouch || now.Sub(d.MiniAt) < 400*time.Millisecond)) || preview)
 	if miniShow {
-		pa := d.PhoneAspect
+		pa := d.Aspect
 		if pa <= 0.1 {
-			pa = 0.47
+			pa = 2.2
 		}
 		w := int32(float64(c.MiniWidth) * scale)
 		h := int32(float64(w)/pa) + int32(22*scale)
@@ -666,13 +624,6 @@ func (u *ui) paint(w *ovWin) {
 	pEndPaint.Call(w.hwnd, uintptr(unsafe.Pointer(&ps)))
 }
 
-func slotLabel(s string) string {
-	if IsAction(s) {
-		return actionLabel(s)
-	}
-	return s
-}
-
 func (u *ui) px(v float64) int32 { return int32(v * u.scale) }
 
 var (
@@ -684,226 +635,114 @@ var (
 	colSub     = rgb(140, 142, 158)
 	colHover   = rgb(120, 92, 20)
 	colHoverBd = rgb(255, 200, 61)
-	colArm     = rgb(24, 110, 60)
-	colArmBd   = rgb(74, 222, 128)
 	colDot     = rgb(255, 70, 90)
 )
 
-// paintMirror はスマホのキーボード画面（映像）と変換中の文字を描く。
-func (u *ui) paintMirror(c *canvas, cw, ch int32, f *Frame) {
-	d := &u.data
-	c.round(0, 0, cw, ch, u.px(12), colBg, rgb(70, 70, 90), 1)
-	head := u.px(50)
-	pad := u.px(6)
-	comp := []rune(d.Comp)
-	txt, col, fs := string(comp), colHoverBd, int(u.px(26))
-	if len(comp) > 20 {
-		txt = "…" + string(comp[len(comp)-19:])
-	}
-	if len(comp) == 0 {
-		hist := []rune(d.History)
-		if len(hist) > 30 {
-			hist = hist[len(hist)-30:]
-		}
-		txt, col, fs = string(hist), colSub, int(u.px(16))
-		if time.Since(d.FlashAt) < 900*time.Millisecond && d.Flash != "" {
-			txt, col, fs = "入力 "+d.Flash, colArmBd, int(u.px(20))
-		}
-	}
-	c.text(txt, pad+u.px(8), 0, cw-2*pad-u.px(16), head, fs, col, true, dtLeft)
-	bi := bitmapInfoHeader{BiWidth: int32(f.W), BiHeight: -int32(f.H), BiPlanes: 1, BiBitCount: 32}
-	bi.BiSize = 40
-	pSetStretchBltMode.Call(c.hdc, 4) // HALFTONE（縮小しても文字がつぶれにくい）
-	pSetBrushOrgEx.Call(c.hdc, 0, 0, 0)
-	pStretchDIBits.Call(c.hdc, uintptr(pad), uintptr(head), uintptr(cw-2*pad), uintptr(ch-head-pad),
-		0, 0, uintptr(f.W), uintptr(f.H), uintptr(unsafe.Pointer(&f.BGRA[0])), uintptr(unsafe.Pointer(&bi)), 0, srccopy)
-}
-
-func (u *ui) paintComp(c *canvas, cw, ch int32) {
-	d := &u.data
-	if f := d.Frame; f != nil && time.Since(f.At) < 1500*time.Millisecond && len(f.BGRA) >= f.W*f.H*4 && f.W > 0 {
-		u.paintMirror(c, cw, ch, f)
-		return
-	}
-	c.round(0, 0, cw, ch, u.px(14), colBg, rgb(70, 70, 90), 1)
-	pad := u.px(10)
-	head := u.px(34)
-	c.round(pad, u.px(7), u.px(84), head-u.px(12), u.px(10), rgb(60, 90, 200), 0, 0)
-	c.text("スマホ入力", pad, u.px(7), u.px(84), head-u.px(12), int(u.px(13)), colText, true, dtCenter)
-	if d.Cfg.ShowHistory {
-		hist := []rune(d.History)
-		if len(hist) > 24 {
-			hist = hist[len(hist)-24:]
-		}
-		c.text(string(hist), pad+u.px(94), 0, cw-2*pad-u.px(94), head, int(u.px(14)), colSub, false, dtRight)
-	}
-	// 変換中の文字（大きく）。長い時は後ろ側を表示
-	box := rect{pad, head, cw - pad, ch - pad}
-	c.round(box.L, box.T, box.R-box.L, box.B-box.T, u.px(10), rgb(36, 37, 46), 0, 0)
-	comp := []rune(d.Comp)
-	txt, col := string(comp), colHoverBd
-	if len(comp) > 16 {
-		txt = "…" + string(comp[len(comp)-15:])
-	}
-	if len(comp) == 0 {
-		txt, col = "（スマホのキーボードで入力）", colSub
-		if time.Since(d.FlashAt) < 900*time.Millisecond && d.Flash != "" {
-			txt, col = "入力 "+d.Flash, colArmBd
-		}
-		if !d.Connected {
-			txt = "プレビュー（未接続）"
-		}
-	}
-	fs := int(u.px(30))
-	if len(comp) == 0 {
-		fs = int(u.px(18))
-	}
-	c.text(txt, box.L+u.px(12), box.T, box.R-box.L-u.px(24), box.B-box.T, fs, col, true, dtLeft)
-}
+var (
+	colOnce  = rgb(150, 110, 20) // ワンショット
+	colLock  = rgb(30, 130, 70)  // 固定
+	colHeld  = rgb(40, 90, 190)  // 押さえている
+	colFlash = rgb(60, 200, 110) // 入力した
+	colFn    = rgb(120, 220, 255)
+)
 
 func (u *ui) paintKb(c *canvas, cw, ch int32) {
 	d := &u.data
-	if d.Input == "gboard" {
-		u.paintComp(c, cw, ch)
-		return
-	}
-	kb := &d.Layout
-	c.round(0, 0, cw, ch, u.px(14), colBg, rgb(70, 70, 90), 1)
-	header := u.px(40)
-	pad := u.px(8)
+	b := &d.Board
+	kv := &d.Kbd
+	c.round(0, 0, cw, ch, u.px(12), colBg, rgb(70, 70, 90), 1)
+	header := u.px(30)
+	pad := u.px(6)
 
-	// ヘッダー: モード / 入力履歴 / 状態
-	title := d.Title
-	if d.Caps {
-		title += "(大)"
+	// ヘッダー: IMEの状態 / 入力履歴
+	imeTxt, imeCol := "A", rgb(90, 92, 110)
+	if d.IME {
+		imeTxt, imeCol = "あ", rgb(60, 90, 200)
 	}
-	c.round(pad, u.px(7), u.px(58), header-u.px(14), u.px(10), rgb(60, 90, 200), 0, 0)
-	c.text(title, pad, u.px(7), u.px(58), header-u.px(14), int(u.px(15)), colText, true, dtCenter)
-
-	status := ""
-	stCol := colSub
-	sn := d.Snap
-	// 右側: 今離すと入力されるもの（最重要）
-	switch {
-	case !d.Connected:
-		status = "プレビュー"
-	case sn.Touching && sn.Preview != "":
-		status = "離すと " + slotLabel(sn.Preview)
-		stCol = colHoverBd
-		if sn.Armed {
-			stCol = colArmBd
+	c.round(pad, u.px(4), u.px(34), header-u.px(8), u.px(8), imeCol, 0, 0)
+	c.text(imeTxt, pad, u.px(4), u.px(34), header-u.px(8), int(u.px(15)), colText, true, dtCenter)
+	info := ""
+	if !d.Connected {
+		info = "プレビュー（未接続）"
+	} else if d.Cfg.ShowHistory {
+		h := []rune(d.History)
+		if len(h) > 40 {
+			h = h[len(h)-40:]
 		}
-	case sn.Touching && d.KbStyle == "dwell":
-		status = "止めると確定待機"
-		stCol = colHoverBd
-	case sn.Touching:
-		status = "離すと取消"
-		stCol = rgb(255, 120, 130)
-	case sn.Canceled:
-		status = "取り消し"
+		info = string(h)
 	}
-	flashAge := time.Since(d.FlashAt)
-	right := status
-	if flashAge < 700*time.Millisecond && d.Flash != "" && !sn.Touching {
-		right = "入力 " + d.Flash
-		stCol = colArmBd
-	}
-	rw := (cw - 2*pad) * 55 / 100
-	c.text(right, cw-rw-pad, 0, rw, header, int(u.px(16)), stCol, true, dtRight)
-	if d.Cfg.ShowHistory {
-		hist := []rune(d.History)
-		if len(hist) > 12 {
-			hist = hist[len(hist)-12:]
-		}
-		hx := pad + u.px(64)
-		c.text(string(hist), hx, 0, cw-rw-pad-hx-u.px(4), header, int(u.px(14)), colSub, false, dtLeft)
-	}
+	c.text(info, pad+u.px(44), 0, cw-2*pad-u.px(44), header, int(u.px(14)), colSub, false, dtRight)
 
-	// キーボード
 	ax, ay := pad, header
 	aw, ah := cw-2*pad, ch-header-pad
-	if kb.Cols <= 0 || kb.Rows <= 0 {
+	if b.Cols <= 0 || b.Rows <= 0 {
 		return
 	}
-	cellW := float64(aw) / float64(kb.Cols)
-	cellH := float64(ah) / float64(kb.Rows)
-	gap := u.px(3)
-	keyRect := func(k *Key) (int32, int32, int32, int32) {
-		x := ax + int32(k.X*cellW) + gap
-		y := ay + int32(k.Y*cellH) + gap
-		return x, y, int32(k.W*cellW) - 2*gap, int32(k.H*cellH) - 2*gap
+	ux := float64(aw) / b.Cols
+	uy := float64(ah) / b.Rows
+	gap := u.px(2)
+	base := math.Min(ux, uy)
+	hover := map[int]bool{}
+	for _, f := range kv.Fingers {
+		if f.Key >= 0 {
+			hover[f.Key] = true
+		}
 	}
-	base := math.Min(cellW, cellH)
-	for i := range kb.Keys {
-		k := &kb.Keys[i]
-		x, y, w, h := keyRect(k)
+	now := time.Now()
+	for i := range b.Keys {
+		k := &b.Keys[i]
+		x := ax + int32(k.X*ux) + gap
+		y := ay + int32(k.Y*uy) + gap
+		w := int32(k.W*ux) - 2*gap
+		h := int32(k.H*uy) - 2*gap
 		fill, bd, bw := colKey, rgb(0, 0, 0), int32(0)
-		if IsAction(k.C) {
+		if k.Letter() == 0 && len([]rune(k.Label)) > 1 {
 			fill = colKeyFn
 		}
-		if sn.Touching && !sn.Armed && sn.Hover == i {
-			fill, bd, bw = colHover, colHoverBd, u.px(3)
+		if k.Mod != "" {
+			switch kv.Mods[k.Mod] {
+			case "once":
+				fill = colOnce
+			case "lock":
+				fill = colLock
+			case "held":
+				fill = colHeld
+			}
 		}
-		if sn.Armed && sn.ArmKey == i {
-			fill, bd, bw = colArm, colArmBd, u.px(3)
+		if ft, ok := d.Flash[i]; ok && now.Sub(ft) < 250*time.Millisecond {
+			fill = colFlash
 		}
-		c.round(x, y, w, h, u.px(8), fill, bd, bw)
-		lf := base * 0.30
-		if n := strings.Count(k.Label, "\n") + 1; n > 1 {
-			lf = base * 0.30 / math.Sqrt(float64(n))
+		if hover[i] {
+			bd, bw = colHoverBd, u.px(3)
+			if fill == colKey || fill == colKeyFn {
+				fill = colHover
+			}
 		}
-		c.text(k.Label, x, y, w, h, int(lf), colText, true, dtCenter)
-		if d.Cfg.ShowHints {
-			hp := int(base * 0.15)
-			hs := int32(float64(hp) * 1.4)
-			c.text(slotLabel(k.L), x+u.px(3), y, w/3, h, hp, colSub, false, dtLeft)
-			c.text(slotLabel(k.R), x+w-w/3-u.px(3), y, w/3, h, hp, colSub, false, dtRight)
-			c.text(slotLabel(k.U), x, y+u.px(1), w, hs, hp, colSub, false, dtCenter)
-			c.text(slotLabel(k.D), x, y+h-hs-u.px(1), w, hs, hp, colSub, false, dtCenter)
-		}
-	}
+		c.round(x, y, w, h, u.px(6), fill, bd, bw)
 
-	// 確定待機中は十字のフリック候補を大きく表示
-	if sn.Armed && sn.ArmKey >= 0 && sn.ArmKey < len(kb.Keys) {
-		k := &kb.Keys[sn.ArmKey]
-		x, y, w, h := keyRect(k)
-		cx, cy := x+w/2, y+h/2
-		s := int32(base*0.78) - gap
-		pos := map[Dir][2]int32{DirC: {0, 0}, DirL: {-1, 0}, DirU: {0, -1}, DirR: {1, 0}, DirD: {0, 1}}
-		for _, dd := range []Dir{DirL, DirU, DirR, DirD, DirC} {
-			txt := slotLabel(k.Slot(dd))
-			if txt == "" && dd != DirC {
-				continue
-			}
-			p := pos[dd]
-			bx := cx - s/2 + p[0]*(s+gap)
-			by := cy - s/2 + p[1]*(s+gap)
-			f, b := rgb(40, 60, 48), rgb(74, 222, 128)
-			bw := u.px(1)
-			if dd == sn.Dir {
-				f, b, bw = rgb(34, 160, 80), rgb(200, 255, 210), u.px(3)
-			}
-			c.round(bx, by, s, s, u.px(10), f, b, bw)
-			fs := base * 0.36
-			if len([]rune(txt)) > 2 {
+		main, sub, mainCol := k.Label, k.Shift, colText
+		if kv.Fn && k.FnLabel != "" {
+			main, sub, mainCol = k.FnLabel, "", colFn
+		} else if kv.Shift && k.Shift != "" {
+			main, sub = k.Shift, k.Label
+		}
+		fs := base * 0.42
+		if n := len([]rune(main)); n > 1 {
+			fs = base * 0.27
+			if n > 3 {
 				fs = base * 0.22
 			}
-			c.text(txt, bx, by, s, s, int(fs), colText, true, dtCenter)
+		}
+		c.text(main, x, y, w, h, int(fs), mainCol, true, dtCenter)
+		if sub != "" && d.Cfg.ShowHints {
+			c.text(sub, x+u.px(3), y+u.px(1), w/2, int32(base*0.3), int(base*0.2), colSub, false, dtLeft)
 		}
 	}
-
-	// 指の位置
-	if sn.Touching {
-		fx := float64(ax) + sn.RX*float64(aw)
-		fy := float64(ay) + sn.RY*float64(ah)
-		fx = math.Max(float64(ax), math.Min(float64(ax+aw), fx))
-		fy = math.Max(float64(ay), math.Min(float64(ay+ah), fy))
-		r := u.px(8)
-		if sn.Inside {
-			c.circle(int32(fx), int32(fy), r, colDot, rgb(255, 255, 255), u.px(2))
-		} else {
-			c.circle(int32(fx), int32(fy), r, colBg, colDot, u.px(3))
-		}
+	// 指の位置（両手分）
+	for _, f := range kv.Fingers {
+		fx := ax + int32(f.X*float64(aw))
+		fy := ay + int32(f.Y*float64(ah))
+		c.circle(fx, fy, u.px(7), colDot, rgb(255, 255, 255), u.px(2))
 	}
 }
 

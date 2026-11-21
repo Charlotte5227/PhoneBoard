@@ -16,7 +16,11 @@ var (
 	imm32    = syscall.NewLazyDLL("imm32.dll")
 	shell32  = syscall.NewLazyDLL("shell32.dll")
 	shcore   = syscall.NewLazyDLL("shcore.dll")
+)
 
+func syscallLazy(name string) *syscall.LazyDLL { return syscall.NewLazyDLL(name) }
+
+var (
 	pSendInput                     = user32.NewProc("SendInput")
 	pMapVirtualKeyW                = user32.NewProc("MapVirtualKeyW")
 	pVkKeyScanExW                  = user32.NewProc("VkKeyScanExW")
@@ -268,6 +272,26 @@ func (w *winInjector) SetIME(open bool, kana bool) {
 		}
 		imeMsg(ime, imcSetOpenStatus, v)
 	}
+}
+
+// IMEOpen は前面のアプリでIMEがONか（問い合わせのみ。状態は変えない）。
+func (w *winInjector) IMEOpen() bool {
+	fg, _, _ := pGetForegroundWindow.Call()
+	if fg == 0 {
+		return false
+	}
+	target := fg
+	tid, _, _ := pGetWindowThreadProcessId.Call(fg, 0)
+	gti := guiThreadInfo{CbSize: uint32(unsafe.Sizeof(guiThreadInfo{}))}
+	if r, _, _ := pGetGUIThreadInfo.Call(tid, uintptr(unsafe.Pointer(&gti))); r != 0 && gti.HwndFocus != 0 {
+		target = gti.HwndFocus
+	}
+	ime, _, _ := pImmGetDefaultIMEWnd.Call(target)
+	if ime == 0 {
+		return false
+	}
+	cur, ok := imeMsg(ime, imcGetOpenStatus, 0)
+	return ok && cur != 0
 }
 
 var instanceMutex uintptr

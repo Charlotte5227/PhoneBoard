@@ -43,8 +43,6 @@ public class Client {
     private final Listener listener;
     private final Handler main = new Handler(Looper.getMainLooper());
     private final LinkedBlockingQueue<String> outq = new LinkedBlockingQueue<String>();
-    private static final String FRAME_MARK = new String("<frame>");
-    private volatile String pendingFrame; // 最新の画面フレームだけを保持（古いものは捨てる）
 
     private volatile String host;
     private volatile int port = DEFAULT_PORT;
@@ -109,16 +107,6 @@ public class Client {
         if (connected) outq.offer(o.toString());
     }
 
-    /** キーボード画面のJPEGを送る。送信が追いつかない時は最新の1枚だけ送る。 */
-    public void sendFrame(byte[] jpeg, int w, int h) {
-        if (!connected) return;
-        String line = "{\"t\":\"frame\",\"w\":" + w + ",\"h\":" + h + ",\"jpg\":\""
-                + android.util.Base64.encodeToString(jpeg, android.util.Base64.NO_WRAP) + "\"}";
-        boolean had = pendingFrame != null;
-        pendingFrame = line;
-        if (!had) outq.offer(FRAME_MARK);
-    }
-
     private void closeSock() {
         Socket s = sock;
         sock = null;
@@ -157,7 +145,6 @@ public class Client {
                 try { s.setTrafficClass(0x10); } catch (Exception ignored) { } // 低遅延
                 sock = s;
                 outq.clear();
-                pendingFrame = null;
                 final Writer out = new OutputStreamWriter(s.getOutputStream(), "UTF-8");
                 BufferedReader in = new BufferedReader(new InputStreamReader(s.getInputStream(), "UTF-8"));
                 JSONObject hello = new JSONObject();
@@ -183,18 +170,11 @@ public class Client {
                                 }
                                 if (line != null) {
                                     StringBuilder sb = new StringBuilder();
-                                    // 溜まっている分はまとめて送る（画面フレームは最新の1枚だけ）
+                                    // 溜まっている分はまとめて送る
                                     String more = line;
-                                    boolean frame = false;
                                     do {
-                                        if (more == FRAME_MARK) frame = true;
-                                        else sb.append(more).append('\n');
+                                        sb.append(more).append('\n');
                                     } while ((more = outq.poll()) != null);
-                                    if (frame) {
-                                        String f = pendingFrame;
-                                        pendingFrame = null;
-                                        if (f != null) sb.append(f).append('\n');
-                                    }
                                     out.write(sb.toString());
                                     out.flush();
                                     lastSend = now;

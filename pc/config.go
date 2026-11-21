@@ -26,33 +26,21 @@ type MouseCfg struct {
 }
 
 type KeyboardCfg struct {
-	Input            string  `json:"input"`            // gboard: スマホのキーボードをそのまま使う / flick: PhoneBoardのフリック
-	Mirror           bool    `json:"mirror"`           // gboard: スマホのキーボード画面をPCに映す
-	MirrorFps        int     `json:"mirrorFps"`        //
-	MirrorWidth      int     `json:"mirrorWidth"`      // 送る画像の横幅(px)
-	MirrorQuality    int     `json:"mirrorQuality"`    // JPEG品質
-	MirrorScale      float64 `json:"mirrorScale"`      // PC画面での表示幅(倍率、キーボード表示の幅に対して)
-	Style            string  `json:"style"`            // simple: なぞって離すと入力 / dwell: 止めて確定待機 / flick: 普通のフリック
-	FlickSpeed       float64 `json:"flickSpeed"`       // simple: これより速い動きをフリックとみなす(dp/ms)
-	Explore          bool    `json:"explore"`          // 探り操作（なぞって位置を探し、止めて確定待機）
-	DwellMs          int     `json:"dwellMs"`          // 止めてから確定待機になるまで
-	QuickMs          int     `json:"quickMs"`          // この時間内に離せば通常のフリックとして扱う
-	FlickDp          float64 `json:"flickDp"`          // フリック判定距離(dp)
-	StillDp          float64 `json:"stillDp"`          // 「止まっている」とみなす揺れ幅(dp)
-	RearmDp          float64 `json:"rearmDp"`          // 確定待機後、これ以上動かすと探り直し(0=無効)
-	RepeatDelayMs    int     `json:"repeatDelayMs"`    // ⌫等のリピート開始
+	CommitOn         string  `json:"commitOn"`         // release: 離した時に入力（滑らせて位置を直せる） / press: 触れた瞬間に入力
+	ModMode          string  `json:"modMode"`          // sticky: 1回押すと次のキーに効く（2回で固定。同時押しも可） / hold: 押している間だけ
+	Assist           bool    `json:"assist"`           // 入力補助（次に来そうな文字の当たり判定を広げる）
+	AssistStrength   float64 `json:"assistStrength"`   // 入力補助の強さ
+	RepeatDelayMs    int     `json:"repeatDelayMs"`    // BS・矢印などのリピート開始
 	RepeatIntervalMs int     `json:"repeatIntervalMs"` // リピート間隔
-	KanaOutput       string  `json:"kanaOutput"`       // ime: ローマ字でIMEへ送る / unicode: かなを直接送る
-	ImeControl       bool    `json:"imeControl"`       // かな/英数の切替時にIMEのON/OFFを自動制御
+	ClickSound       string  `json:"clickSound"`       // pc / phone / both / off
+	ClickVolume      int     `json:"clickVolume"`      // 0〜100
 }
 
 type HapticCfg struct {
 	Enabled  bool `json:"enabled"`
-	HoverMs  int  `json:"hoverMs"`  // 別のキーに移った
-	ArmMs    int  `json:"armMs"`    // 確定待機になった
-	DirMs    int  `json:"dirMs"`    // フリック方向が変わった
+	HoverMs  int  `json:"hoverMs"`  // 指が別のキーに移った
 	CommitMs int  `json:"commitMs"` // 入力した
-	ToggleMs int  `json:"toggleMs"` // モード切替など
+	ToggleMs int  `json:"toggleMs"` // モード切替・修飾キー
 	Amp      int  `json:"amp"`      // 強さ 1-255
 }
 
@@ -80,7 +68,7 @@ type ButtonCfg struct {
 }
 
 // configSchema は設定形式の版。上げると古い既定値を新しい既定値に置き換える。
-const configSchema = 4
+const configSchema = 5
 
 type Config struct {
 	Schema      int         `json:"schema"`
@@ -109,19 +97,17 @@ func DefaultConfig() *Config {
 			RightClickOneShot: true,
 		},
 		Keyboard: KeyboardCfg{
-			Input: "gboard", Mirror: true, MirrorFps: 15, MirrorWidth: 540, MirrorQuality: 60, MirrorScale: 1.6,
-			Style: "simple", FlickSpeed: 0.25,
-			Explore: true, DwellMs: 260, QuickMs: 300, FlickDp: 20, StillDp: 7, RearmDp: 90,
-			RepeatDelayMs: 450, RepeatIntervalMs: 70, KanaOutput: "ime", ImeControl: true,
+			CommitOn: "release", ModMode: "sticky", Assist: true, AssistStrength: 0.8,
+			RepeatDelayMs: 450, RepeatIntervalMs: 60, ClickSound: "pc", ClickVolume: 60,
 		},
-		Haptic: HapticCfg{Enabled: true, HoverMs: 8, ArmMs: 30, DirMs: 6, CommitMs: 14, ToggleMs: 40, Amp: 200},
+		Haptic: HapticCfg{Enabled: true, HoverMs: 6, CommitMs: 14, ToggleMs: 35, Amp: 200},
 		Overlay: OverlayCfg{
-			Width: 300, Opacity: 92, Anchor: "custom", PosX: 0.5, PosY: 0.78, OffsetX: 0, OffsetY: 0,
-			ShowHints: true, ShowHistory: true, MiniMap: true, MiniWidth: 150, MiniAnchor: "bottom-right", Toast: true,
+			Width: 640, Opacity: 92, Anchor: "custom", PosX: 0.5, PosY: 0.8, OffsetX: 0, OffsetY: 0,
+			ShowHints: true, ShowHistory: true, MiniMap: true, MiniWidth: 220, MiniAnchor: "bottom-right", Toast: true,
 		},
 		Buttons: ButtonCfg{
 			MouseVolUp: "{KEYBOARD}", MouseVolDown: "{CLICK_L}",
-			KbVolUp: "{MOUSE}", KbVolDown: "{MODE_NEXT}",
+			KbVolUp: "{MOUSE}", KbVolDown: "{KANJI}",
 		},
 	}
 }
@@ -154,48 +140,26 @@ func (c *Config) Normalize() {
 		m.LongPressMs = 200
 	}
 	k := &c.Keyboard
-	if k.Input != "flick" {
-		k.Input = "gboard"
+	if k.CommitOn != "press" {
+		k.CommitOn = "release"
 	}
-	if k.MirrorFps < 2 || k.MirrorFps > 30 {
-		k.MirrorFps = d.Keyboard.MirrorFps
+	if k.ModMode != "hold" {
+		k.ModMode = "sticky"
 	}
-	if k.MirrorWidth < 240 || k.MirrorWidth > 1440 {
-		k.MirrorWidth = d.Keyboard.MirrorWidth
-	}
-	if k.MirrorQuality < 20 || k.MirrorQuality > 95 {
-		k.MirrorQuality = d.Keyboard.MirrorQuality
-	}
-	if k.MirrorScale < 0.5 || k.MirrorScale > 5 {
-		k.MirrorScale = d.Keyboard.MirrorScale
-	}
-	if k.Style != "dwell" && k.Style != "flick" {
-		k.Style = "simple"
-	}
-	k.Explore = k.Style == "dwell"
-	if k.FlickSpeed < 0.05 || k.FlickSpeed > 3 {
-		k.FlickSpeed = d.Keyboard.FlickSpeed
-	}
-	if k.DwellMs < 50 {
-		k.DwellMs = 50
-	}
-	if k.QuickMs < k.DwellMs {
-		k.QuickMs = k.DwellMs
-	}
-	if k.FlickDp < 5 {
-		k.FlickDp = 5
-	}
-	if k.StillDp < 1 {
-		k.StillDp = 1
-	}
+	k.AssistStrength = clampF(k.AssistStrength, 0, 3)
 	if k.RepeatDelayMs < 100 {
 		k.RepeatDelayMs = 100
 	}
 	if k.RepeatIntervalMs < 20 {
 		k.RepeatIntervalMs = 20
 	}
-	if k.KanaOutput != "unicode" {
-		k.KanaOutput = "ime"
+	switch k.ClickSound {
+	case "pc", "phone", "both", "off":
+	default:
+		k.ClickSound = "pc"
+	}
+	if k.ClickVolume < 0 || k.ClickVolume > 100 {
+		k.ClickVolume = d.Keyboard.ClickVolume
 	}
 	h := &c.Haptic
 	if h.Amp < 1 || h.Amp > 255 {
@@ -277,25 +241,14 @@ func LoadConfig() *Config {
 	if err := loadJSON(p, c); err != nil {
 		c = DefaultConfig()
 	}
-	if c.Schema < 2 {
-		// v1 → v2: 入力方式を「かんたん」に、PC表示を小さく
+	if c.Schema < 5 {
+		// v2（横向き・JIS配列キーボード）: キーボード関連の設定を新しい既定値に
 		d := DefaultConfig()
-		c.Keyboard.Style = d.Keyboard.Style
-		c.Keyboard.FlickDp = d.Keyboard.FlickDp
-		c.Keyboard.RearmDp = d.Keyboard.RearmDp
+		c.Keyboard = d.Keyboard
+		c.Haptic = d.Haptic
 		c.Overlay.Width = d.Overlay.Width
-		c.Overlay.Anchor = d.Overlay.Anchor
-		c.Overlay.PosX, c.Overlay.PosY = d.Overlay.PosX, d.Overlay.PosY
-		c.Overlay.OffsetX, c.Overlay.OffsetY = 0, 0
-	}
-	if c.Schema < 3 {
-		// v2 → v3: スマホのキーボード(Gboard)入力を既定に
-		c.Keyboard.Input = "gboard"
-	}
-	if c.Schema < 4 {
-		d := DefaultConfig().Keyboard
-		c.Keyboard.Mirror = true
-		c.Keyboard.MirrorFps, c.Keyboard.MirrorWidth, c.Keyboard.MirrorQuality, c.Keyboard.MirrorScale = d.MirrorFps, d.MirrorWidth, d.MirrorQuality, d.MirrorScale
+		c.Overlay.Anchor, c.Overlay.PosX, c.Overlay.PosY = d.Overlay.Anchor, d.Overlay.PosX, d.Overlay.PosY
+		c.Buttons.KbVolUp, c.Buttons.KbVolDown = d.Buttons.KbVolUp, d.Buttons.KbVolDown
 	}
 	c.Schema = configSchema
 	c.Normalize()
@@ -310,8 +263,8 @@ func SaveConfig(c *Config) error {
 func LoadLayouts() *Layouts {
 	l := &Layouts{}
 	p := filepath.Join(dataDir(), "layouts.json")
-	if err := loadJSON(p, l); err != nil || len(l.Keyboards) == 0 || l.Schema < layoutSchema {
-		if err == nil && len(l.Keyboards) > 0 {
+	if err := loadJSON(p, l); err != nil || len(l.Board.Keys) == 0 || l.Schema < layoutSchema {
+		if err == nil {
 			_ = saveJSON(filepath.Join(dataDir(), "layouts.old.json"), l) // 旧配列は退避
 		}
 		l = DefaultLayouts()

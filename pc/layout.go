@@ -5,54 +5,35 @@ import (
 	"strings"
 )
 
-// Key はフリックキー1つ分。X,Y,W,H はキーボード内のグリッド単位。
-// C/L/U/R/D は 中央(タップ)/左/上/右/下 フリックで出力する文字列。
-// "{ENTER}" のように {} で囲むとアクション（特殊キー）になる。
-type Key struct {
-	Label  string  `json:"label"`
-	X      float64 `json:"x"`
-	Y      float64 `json:"y"`
-	W      float64 `json:"w"`
-	H      float64 `json:"h"`
-	C      string  `json:"c"`
-	L      string  `json:"l"`
-	U      string  `json:"u"`
-	R      string  `json:"r"`
-	D      string  `json:"d"`
-	Repeat bool    `json:"repeat,omitempty"`
+// BKey はキーボードのキー1つ。座標はキー1個分=1の単位（横15×縦5.7）。
+type BKey struct {
+	Label   string  `json:"label"`             // 表示
+	Shift   string  `json:"shift,omitempty"`   // Shift時の表示
+	FnLabel string  `json:"fnLabel,omitempty"` // Fn時の表示
+	Key     string  `json:"key,omitempty"`     // 送るキー名（A, 1, MINUS, ENTER, ...）
+	FnKey   string  `json:"fnKey,omitempty"`   // Fnを押している時に送るキー名
+	Mod     string  `json:"mod,omitempty"`     // 修飾キー: shift / ctrl / alt / win / fn
+	Action  string  `json:"action,omitempty"`  // {MOUSE} などのアクション
+	X       float64 `json:"x"`
+	Y       float64 `json:"y"`
+	W       float64 `json:"w"`
+	H       float64 `json:"h"`
+	Repeat  bool    `json:"repeat,omitempty"` // 押し続けるとリピート
 }
 
-// Slot は方向に応じた出力を返す。
-func (k *Key) Slot(d Dir) string {
-	switch d {
-	case DirL:
-		return k.L
-	case DirU:
-		return k.U
-	case DirR:
-		return k.R
-	case DirD:
-		return k.D
+// Letter は入力補助に使う英字（英字キーでなければ 0）。
+func (k *BKey) Letter() rune {
+	if len(k.Key) == 1 && k.Key[0] >= 'A' && k.Key[0] <= 'Z' && k.Mod == "" {
+		return rune(k.Key[0] - 'A' + 'a')
 	}
-	return k.C
+	return 0
 }
 
-// KbLayout は1種類のキー配列（かな / 英字 / 数字 など）。
-type KbLayout struct {
-	Name  string `json:"name"`  // 内部名 (kana, alpha, num, ...)
-	Title string `json:"title"` // 表示名
-	Kind  string `json:"kind"`  // kana: IMEローマ字入力 / alpha・num: 直接入力
-	Cols  int    `json:"cols"`
-	Rows  int    `json:"rows"`
-	Keys  []Key  `json:"keys"`
-}
-
-// Region はスマホ画面上のキーボード領域（画面に対する割合 0〜1）。
-type Region struct {
-	X float64 `json:"x"`
-	Y float64 `json:"y"`
-	W float64 `json:"w"`
-	H float64 `json:"h"`
+// Board はスマホ画面全体（横向き）に並べるキーボード。
+type Board struct {
+	Cols float64 `json:"cols"`
+	Rows float64 `json:"rows"`
+	Keys []BKey  `json:"keys"`
 }
 
 // MouseZone はマウスモード時のスマホ画面の領域。
@@ -68,22 +49,12 @@ type MouseZone struct {
 }
 
 // layoutSchema は配列データの版。上げると古い配列を新しい既定配列に置き換える（旧配列は layouts.old.json に退避）。
-const layoutSchema = 2
+const layoutSchema = 3
 
 type Layouts struct {
 	Schema     int         `json:"schema"`
-	Region     Region      `json:"region"`
-	Keyboards  []KbLayout  `json:"keyboards"`
+	Board      Board       `json:"board"`
 	MouseZones []MouseZone `json:"mouseZones"`
-}
-
-func (ls *Layouts) Find(name string) (int, *KbLayout) {
-	for i := range ls.Keyboards {
-		if ls.Keyboards[i].Name == name {
-			return i, &ls.Keyboards[i]
-		}
-	}
-	return -1, nil
 }
 
 func (ls *Layouts) Clone() *Layouts {
@@ -104,43 +75,20 @@ func (ls *Layouts) Normalize() {
 		}
 		return v
 	}
-	r := &ls.Region
-	r.X = clamp(r.X, 0, 0.95)
-	r.Y = clamp(r.Y, 0, 0.95)
-	r.W = clamp(r.W, 0.05, 1-r.X)
-	r.H = clamp(r.H, 0.05, 1-r.Y)
-	if len(ls.Keyboards) == 0 {
-		ls.Keyboards = DefaultLayouts().Keyboards
+	if len(ls.Board.Keys) == 0 || ls.Board.Cols <= 0 || ls.Board.Rows <= 0 {
+		ls.Board = DefaultLayouts().Board
 	}
-	for i := range ls.Keyboards {
-		kb := &ls.Keyboards[i]
-		if kb.Cols < 1 {
-			kb.Cols = 1
+	for i := range ls.Board.Keys {
+		k := &ls.Board.Keys[i]
+		if k.W <= 0 {
+			k.W = 1
 		}
-		if kb.Rows < 1 {
-			kb.Rows = 1
+		if k.H <= 0 {
+			k.H = 1
 		}
-		if kb.Name == "" {
-			kb.Name = "layout" + itoa(i)
-		}
-		if kb.Title == "" {
-			kb.Title = kb.Name
-		}
-		if kb.Kind != "kana" {
-			kb.Kind = strings.ToLower(kb.Kind)
-			if kb.Kind != "alpha" && kb.Kind != "num" {
-				kb.Kind = "alpha"
-			}
-		}
-		for j := range kb.Keys {
-			k := &kb.Keys[j]
-			if k.W <= 0 {
-				k.W = 1
-			}
-			if k.H <= 0 {
-				k.H = 1
-			}
-		}
+		k.Mod = strings.ToLower(k.Mod)
+		k.Key = strings.ToUpper(k.Key)
+		k.FnKey = strings.ToUpper(k.FnKey)
 	}
 	for i := range ls.MouseZones {
 		z := &ls.MouseZones[i]
@@ -154,88 +102,87 @@ func (ls *Layouts) Normalize() {
 	}
 }
 
-func itoa(i int) string {
-	b, _ := json.Marshal(i)
-	return string(b)
-}
-
-func k5(label string, x, y float64, c, l, u, r, d string) Key {
-	return Key{Label: label, X: x, Y: y, W: 1, H: 1, C: c, L: l, U: u, R: r, D: d}
-}
-
-// 片手（親指）操作を想定した既定の配列。4列×4行のコンパクト配置。
-// 左3列: 文字、右列: 削除 / 変換(空白) / 改行 / 配列切替。
-func funcKeys(spaceLabel, modeLabel string) []Key {
-	bs := k5("削除", 3, 0, "{BS}", "", "{CTRL+Z}", "{DEL}", "")
-	bs.Repeat = true
-	sp := k5(spaceLabel, 3, 1, "{SPACE}", "{LEFT}", "{UP}", "{RIGHT}", "{DOWN}")
-	return []Key{
-		bs, sp,
-		k5("改行", 3, 2, "{ENTER}", "{TAB}", "{F7}", "{F10}", "{ESC}"),
-		k5(modeLabel, 3, 3, "{MODE_NEXT}", "{MODE:kana}", "{MODE:alpha}", "{MODE:num}", "{MOUSE}"),
-	}
-}
+// topBar は最上段（モード切替ボタンと、指を逃がして取り消すための空き）の高さ。
+const topBar = 0.7
 
 func DefaultLayouts() *Layouts {
-	kana := KbLayout{Name: "kana", Title: "かな", Kind: "kana", Cols: 4, Rows: 4}
-	kana.Keys = append([]Key{
-		k5("あ", 0, 0, "あ", "い", "う", "え", "お"),
-		k5("か", 1, 0, "か", "き", "く", "け", "こ"),
-		k5("さ", 2, 0, "さ", "し", "す", "せ", "そ"),
-		k5("た", 0, 1, "た", "ち", "つ", "て", "と"),
-		k5("な", 1, 1, "な", "に", "ぬ", "ね", "の"),
-		k5("は", 2, 1, "は", "ひ", "ふ", "へ", "ほ"),
-		k5("ま", 0, 2, "ま", "み", "む", "め", "も"),
-		k5("や", 1, 2, "や", "「", "ゆ", "」", "よ"),
-		k5("ら", 2, 2, "ら", "り", "る", "れ", "ろ"),
-		k5("゛゜小", 0, 3, "{CYCLE}", "", "{DAKU}", "{HANDAKU}", "{SMALL}"),
-		k5("わ", 1, 3, "わ", "を", "ん", "ー", "〜"),
-		k5("、。?!", 2, 3, "、", "。", "？", "！", "…"),
-	}, funcKeys("変換", "ABC")...)
+	var keys []BKey
+	add := func(k BKey) { keys = append(keys, k) }
+	row := func(r int) float64 { return topBar + float64(r) }
+	// 最上段
+	add(BKey{Label: "マウス", Action: "{MOUSE}", X: 0, Y: 0, W: 2, H: topBar})
+	add(BKey{Label: "Del", Key: "DEL", X: 13.5, Y: 0, W: 1.5, H: topBar, Repeat: true})
 
-	alpha := KbLayout{Name: "alpha", Title: "ABC", Kind: "alpha", Cols: 4, Rows: 4}
-	alpha.Keys = append([]Key{
-		k5("@#/&_", 0, 0, "@", "#", "/", "&", "_"),
-		k5("ABC", 1, 0, "a", "b", "c", "", ""),
-		k5("DEF", 2, 0, "d", "e", "f", "", ""),
-		k5("GHI", 0, 1, "g", "h", "i", "", ""),
-		k5("JKL", 1, 1, "j", "k", "l", "", ""),
-		k5("MNO", 2, 1, "m", "n", "o", "", ""),
-		k5("PQRS", 0, 2, "p", "q", "r", "s", ""),
-		k5("TUV", 1, 2, "t", "u", "v", "", ""),
-		k5("WXYZ", 2, 2, "w", "x", "y", "z", ""),
-		k5("a/A", 0, 3, "{CASE}", "", "{CAPS}", "", ""),
-		k5("'\"()", 1, 3, "'", "\"", "(", ")", ""),
-		k5(".,?!", 2, 3, ".", ",", "?", "!", "-"),
-	}, funcKeys("空白", "123")...)
+	// 1段目: Esc 1〜0 - ^ ¥ BS（Fnで F1〜F12）
+	add(BKey{Label: "Esc", Key: "ESC", X: 0, Y: row(0), W: 1, H: 1})
+	nums := []struct{ l, s string }{{"1", "!"}, {"2", "\""}, {"3", "#"}, {"4", "$"}, {"5", "%"}, {"6", "&"}, {"7", "'"}, {"8", "("}, {"9", ")"}, {"0", ""}}
+	for i, n := range nums {
+		f := "F" + itoa(i+1)
+		add(BKey{Label: n.l, Shift: n.s, Key: n.l, FnKey: f, FnLabel: f, X: float64(1 + i), Y: row(0), W: 1, H: 1})
+	}
+	add(BKey{Label: "-", Shift: "=", Key: "MINUS", FnKey: "F11", FnLabel: "F11", X: 11, Y: row(0), W: 1, H: 1})
+	add(BKey{Label: "^", Shift: "~", Key: "CARET", FnKey: "F12", FnLabel: "F12", X: 12, Y: row(0), W: 1, H: 1})
+	add(BKey{Label: "¥", Shift: "|", Key: "YEN", FnKey: "PRINTSCREEN", FnLabel: "PrtSc", X: 13, Y: row(0), W: 1, H: 1})
+	add(BKey{Label: "BS", Key: "BS", FnKey: "DEL", FnLabel: "Del", X: 14, Y: row(0), W: 1, H: 1, Repeat: true})
 
-	num := KbLayout{Name: "num", Title: "123", Kind: "num", Cols: 4, Rows: 4}
-	num.Keys = append([]Key{
-		k5("1", 0, 0, "1", "!", "@", "#", ""),
-		k5("2", 1, 0, "2", "$", "%", "^", ""),
-		k5("3", 2, 0, "3", "&", "*", "~", ""),
-		k5("4", 0, 1, "4", "+", "-", "=", ""),
-		k5("5", 1, 1, "5", "<", ">", "|", ""),
-		k5("6", 2, 1, "6", "(", ")", "\\", ""),
-		k5("7", 0, 2, "7", "[", "]", ":", ""),
-		k5("8", 1, 2, "8", "{", "}", ";", ""),
-		k5("9", 2, 2, "9", "\"", "'", "`", ""),
-		k5("()", 0, 3, "(", ")", "[", "]", ""),
-		k5("0", 1, 3, "0", "_", "~", "?", ""),
-		k5(".,-/", 2, 3, ".", ",", "-", "/", ""),
-	}, funcKeys("空白", "かな")...)
+	// 2段目: Tab Q〜P @ [ Enter(2段)
+	add(BKey{Label: "Tab", Key: "TAB", X: 0, Y: row(1), W: 1.75, H: 1})
+	for i, c := range "QWERTYUIOP" {
+		add(BKey{Label: string(c), Key: string(c), X: 1.75 + float64(i), Y: row(1), W: 1, H: 1})
+	}
+	add(BKey{Label: "@", Shift: "`", Key: "AT", X: 11.75, Y: row(1), W: 1, H: 1})
+	add(BKey{Label: "[", Shift: "{", Key: "LBRACKET", X: 12.75, Y: row(1), W: 1, H: 1})
+	add(BKey{Label: "Enter", Key: "ENTER", X: 13.75, Y: row(1), W: 1.25, H: 2})
+
+	// 3段目: Ctrl A〜L ; : ]（Fn+Ctrl = CapsLock）
+	add(BKey{Label: "Ctrl", Mod: "ctrl", FnKey: "CAPSLOCK", FnLabel: "Caps", X: 0, Y: row(2), W: 1.75, H: 1})
+	for i, c := range "ASDFGHJKL" {
+		add(BKey{Label: string(c), Key: string(c), X: 1.75 + float64(i), Y: row(2), W: 1, H: 1})
+	}
+	add(BKey{Label: ";", Shift: "+", Key: "SEMICOLON", X: 10.75, Y: row(2), W: 1, H: 1})
+	add(BKey{Label: ":", Shift: "*", Key: "COLON", X: 11.75, Y: row(2), W: 1, H: 1})
+	add(BKey{Label: "]", Shift: "}", Key: "RBRACKET", X: 12.75, Y: row(2), W: 1, H: 1})
+
+	// 4段目: Shift Z〜M , . / \ ↑ Shift
+	add(BKey{Label: "Shift", Mod: "shift", X: 0, Y: row(3), W: 2, H: 1})
+	for i, c := range "ZXCVBNM" {
+		add(BKey{Label: string(c), Key: string(c), X: 2 + float64(i), Y: row(3), W: 1, H: 1})
+	}
+	add(BKey{Label: ",", Shift: "<", Key: "COMMA", X: 9, Y: row(3), W: 1, H: 1})
+	add(BKey{Label: ".", Shift: ">", Key: "PERIOD", X: 10, Y: row(3), W: 1, H: 1})
+	add(BKey{Label: "/", Shift: "?", Key: "SLASH", X: 11, Y: row(3), W: 1, H: 1})
+	add(BKey{Label: "\\", Shift: "_", Key: "BACKSLASH", X: 12, Y: row(3), W: 1, H: 1})
+	add(BKey{Label: "↑", Key: "UP", FnKey: "PGUP", FnLabel: "PgUp", X: 13, Y: row(3), W: 1, H: 1, Repeat: true})
+	add(BKey{Label: "Shift", Mod: "shift", X: 14, Y: row(3), W: 1, H: 1})
+
+	// 5段目: Fn 半/全 Win Alt 無変換 Space 変換 かな ← ↓ →
+	add(BKey{Label: "Fn", Mod: "fn", X: 0, Y: row(4), W: 1, H: 1})
+	add(BKey{Label: "半/全", Key: "KANJI", X: 1, Y: row(4), W: 1, H: 1})
+	add(BKey{Label: "Win", Mod: "win", FnKey: "APPS", FnLabel: "Menu", X: 2, Y: row(4), W: 1, H: 1})
+	add(BKey{Label: "Alt", Mod: "alt", X: 3, Y: row(4), W: 1, H: 1})
+	add(BKey{Label: "無変換", Key: "NONCONVERT", X: 4, Y: row(4), W: 1.25, H: 1})
+	add(BKey{Label: "Space", Key: "SPACE", X: 5.25, Y: row(4), W: 4.5, H: 1})
+	add(BKey{Label: "変換", Key: "CONVERT", X: 9.75, Y: row(4), W: 1.25, H: 1})
+	add(BKey{Label: "かな", Key: "KANA", X: 11, Y: row(4), W: 1, H: 1})
+	add(BKey{Label: "←", Key: "LEFT", FnKey: "HOME", FnLabel: "Home", X: 12, Y: row(4), W: 1, H: 1, Repeat: true})
+	add(BKey{Label: "↓", Key: "DOWN", FnKey: "PGDN", FnLabel: "PgDn", X: 13, Y: row(4), W: 1, H: 1, Repeat: true})
+	add(BKey{Label: "→", Key: "RIGHT", FnKey: "END", FnLabel: "End", X: 14, Y: row(4), W: 1, H: 1, Repeat: true})
 
 	return &Layouts{
 		Schema: layoutSchema,
-		// 右手の親指が届きやすい右下に、小さめに配置
-		Region:    Region{X: 0.25, Y: 0.70, W: 0.75, H: 0.30},
-		Keyboards: []KbLayout{kana, alpha, num},
+		Board:  Board{Cols: 15, Rows: topBar + 5, Keys: keys},
 		MouseZones: []MouseZone{
-			{Type: "pad", Label: "パッド", X: 0, Y: 0, W: 0.8, H: 0.82},
-			{Type: "scroll", Label: "スクロール", X: 0.8, Y: 0, W: 0.2, H: 0.82},
-			{Type: "button", Label: "キーボード", Action: "{KEYBOARD}", X: 0, Y: 0.82, W: 0.3, H: 0.18},
-			{Type: "button", Label: "左右切替", Action: "{TAPMODE}", X: 0.3, Y: 0.82, W: 0.3, H: 0.18},
-			{Type: "button", Label: "右クリック", Action: "{CLICK_R}", X: 0.6, Y: 0.82, W: 0.4, H: 0.18},
+			// 左手の親指でボタン、右手の親指でカーソル（ノートPCのタッチパッド風）
+			{Type: "button", Label: "キーボード", Action: "{KEYBOARD}", X: 0, Y: 0, W: 0.16, H: 0.14},
+			{Type: "button", Label: "左クリック", Action: "{CLICK_L}", X: 0, Y: 0.14, W: 0.16, H: 0.43},
+			{Type: "button", Label: "右クリック", Action: "{CLICK_R}", X: 0, Y: 0.57, W: 0.16, H: 0.43},
+			{Type: "pad", Label: "パッド", X: 0.16, Y: 0, W: 0.72, H: 1},
+			{Type: "scroll", Label: "スクロール", X: 0.88, Y: 0, W: 0.12, H: 1},
 		},
 	}
+}
+
+func itoa(i int) string {
+	b, _ := json.Marshal(i)
+	return string(b)
 }

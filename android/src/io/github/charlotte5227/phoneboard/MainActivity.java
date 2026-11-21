@@ -5,20 +5,17 @@ import android.content.Context;
 import android.content.SharedPreferences;
 import android.graphics.Color;
 import android.graphics.Typeface;
+import android.media.AudioAttributes;
+import android.media.SoundPool;
+import android.net.wifi.WifiManager;
 import android.os.Build;
 import android.os.Bundle;
-import android.content.Intent;
-import android.media.projection.MediaProjectionManager;
-import android.provider.Settings;
-import android.view.WindowInsets;
+import android.os.VibrationEffect;
 import android.os.Vibrator;
-import android.net.wifi.WifiManager;
 import android.text.InputType;
 import android.util.TypedValue;
-import android.view.Gravity;
 import android.view.KeyEvent;
 import android.view.View;
-import android.view.ViewGroup;
 import android.view.Window;
 import android.view.WindowManager;
 import android.view.inputmethod.InputMethodManager;
@@ -34,14 +31,15 @@ import android.widget.TextView;
 import org.json.JSONArray;
 import org.json.JSONObject;
 
-import java.lang.reflect.Method;
+import java.io.File;
+import java.io.FileOutputStream;
 import java.util.List;
+import java.util.Random;
 
 public class MainActivity extends Activity implements Client.Listener, PadView.Host {
 
     private Client client;
     private PadView pad;
-    private CaptureEdit capture;
     private ScrollView setup;
     private TextView statusView;
     private LinearLayout foundList;
@@ -53,17 +51,8 @@ public class MainActivity extends Activity implements Client.Listener, PadView.H
     private boolean setupByUser;
     private String lastStatus = "";
     private WifiManager.WifiLock wifiLock;
-    private static final int REQ_CAPTURE = 77;
-    private boolean mirrorWanted;      // PC設定: キーボード画面を映す
-    private boolean captureAsked;      // このセッションで許可を求めたか
-    private Button captureButton;
-    private final android.os.Handler ui = new android.os.Handler();
-    private final Runnable imePoll = new Runnable() {
-        public void run() {
-            updateMirrorState();
-            ui.postDelayed(this, 250);
-        }
-    };
+    private SoundPool sounds;
+    private int clickSmall, clickBig;
 
     @Override
     protected void onCreate(Bundle b) {
@@ -71,46 +60,18 @@ public class MainActivity extends Activity implements Client.Listener, PadView.H
         requestWindowFeature(Window.FEATURE_NO_TITLE);
         getWindow().addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON | WindowManager.LayoutParams.FLAG_FULLSCREEN);
         if (Build.VERSION.SDK_INT >= 28) {
-            try {
-                WindowManager.LayoutParams lp = getWindow().getAttributes();
-                lp.getClass().getField("layoutInDisplayCutoutMode").setInt(lp, 1); // SHORT_EDGES
-                getWindow().setAttributes(lp);
-            } catch (Throwable ignored) {
-            }
+            WindowManager.LayoutParams lp = getWindow().getAttributes();
+            lp.layoutInDisplayCutoutMode = WindowManager.LayoutParams.LAYOUT_IN_DISPLAY_CUTOUT_MODE_SHORT_EDGES;
+            getWindow().setAttributes(lp);
         }
         prefs = getSharedPreferences("pb", MODE_PRIVATE);
         vibrator = (Vibrator) getSystemService(Context.VIBRATOR_SERVICE);
+        initSounds();
 
         FrameLayout root = new FrameLayout(this);
         root.setBackgroundColor(Color.BLACK);
         pad = new PadView(this, this);
         root.addView(pad, new FrameLayout.LayoutParams(-1, -1));
-        // Gboard等の入力を受け取る見えない入力欄（1px）
-        capture = new CaptureEdit(this);
-        capture.setSink(new CaptureEdit.Sink() {
-            public void onComposing(String text) { sendText("comp", text); }
-            public void onCommit(String text) { sendText("text", text); }
-            public void onKey(String name) {
-                try {
-                    JSONObject o = new JSONObject();
-                    o.put("t", "key");
-                    o.put("k", name);
-                    client.send(o);
-                } catch (Exception ignored) {
-                }
-            }
-            public void onBack() {
-                // キーボードを閉じたらマウスに戻る
-                try {
-                    JSONObject o = new JSONObject();
-                    o.put("t", "act");
-                    o.put("a", "{MOUSE}");
-                    client.send(o);
-                } catch (Exception ignored) {
-                }
-            }
-        });
-        root.addView(capture, new FrameLayout.LayoutParams(1, 1));
         setup = buildSetup();
         root.addView(setup, new FrameLayout.LayoutParams(-1, -1));
         setContentView(root);
@@ -125,27 +86,17 @@ public class MainActivity extends Activity implements Client.Listener, PadView.H
             }
         });
         float d = getResources().getDisplayMetrics().density;
-        client.setDevice(Build.MANUFACTURER + " " + Build.MODEL,
-                getResources().getDisplayMetrics().widthPixels / d, getResources().getDisplayMetrics().heightPixels / d);
+        int sw = getResources().getDisplayMetrics().widthPixels, sh = getResources().getDisplayMetrics().heightPixels;
+        client.setDevice(Build.MANUFACTURER + " " + Build.MODEL, Math.max(sw, sh) / d, Math.min(sw, sh) / d);
         client.start();
-        CaptureService.client = client;
-        CaptureService.onStopped = new Runnable() {
-            public void run() {
-                runOnUiThread(new Runnable() {
-                    public void run() { updateCaptureButton(); }
-                });
-            }
-        };
-        ui.post(imePoll);
         showSetup(host.length() == 0);
         if (host.length() == 0) discover();
     }
 
     @Override
     protected void onDestroy() {
-        ui.removeCallbacks(imePoll);
-        stopService(new Intent(this, CaptureService.class));
         client.stop();
+        if (sounds != null) sounds.release();
         super.onDestroy();
     }
 
@@ -163,13 +114,13 @@ public class MainActivity extends Activity implements Client.Listener, PadView.H
         if (wifiLock != null && wifiLock.isHeld()) wifiLock.release();
     }
 
-    /** Wi-Fiの省電力（パケットがまとめて遅れて届く）を止めて、カーソルのカクつき・切断を防ぐ。 */
+    /** Wi-Fiの省電力（パケットがまとめて遅れて届く）を止めて、カクつき・切断を防ぐ。 */
     private void acquireWifiLock() {
         try {
             if (wifiLock == null) {
                 WifiManager wm = (WifiManager) getApplicationContext().getSystemService(Context.WIFI_SERVICE);
                 if (wm == null) return;
-                int mode = Build.VERSION.SDK_INT >= 29 ? 4 /* FULL_LOW_LATENCY */ : 3 /* FULL_HIGH_PERF */;
+                int mode = Build.VERSION.SDK_INT >= 29 ? WifiManager.WIFI_MODE_FULL_LOW_LATENCY : WifiManager.WIFI_MODE_FULL_HIGH_PERF;
                 wifiLock = wm.createWifiLock(mode, "PhoneBoard");
                 wifiLock.setReferenceCounted(false);
             }
@@ -185,7 +136,75 @@ public class MainActivity extends Activity implements Client.Listener, PadView.H
     }
 
     private void hideSystemUi() {
-        getWindow().getDecorView().setSystemUiVisibility(0x1000 | 0x2 | 0x4 | 0x200 | 0x400 | 0x100);
+        getWindow().getDecorView().setSystemUiVisibility(View.SYSTEM_UI_FLAG_IMMERSIVE_STICKY
+                | View.SYSTEM_UI_FLAG_HIDE_NAVIGATION | View.SYSTEM_UI_FLAG_FULLSCREEN
+                | View.SYSTEM_UI_FLAG_LAYOUT_HIDE_NAVIGATION | View.SYSTEM_UI_FLAG_LAYOUT_FULLSCREEN
+                | View.SYSTEM_UI_FLAG_LAYOUT_STABLE);
+    }
+
+    // ===== クリック音（スマホで鳴らす設定の時） =====
+
+    private void initSounds() {
+        try {
+            sounds = new SoundPool.Builder().setMaxStreams(6).setAudioAttributes(new AudioAttributes.Builder()
+                    .setUsage(AudioAttributes.USAGE_ASSISTANCE_SONIFICATION)
+                    .setContentType(AudioAttributes.CONTENT_TYPE_SONIFICATION).build()).build();
+            clickSmall = sounds.load(writeClick("click_s.wav", false), 1);
+            clickBig = sounds.load(writeClick("click_b.wav", true), 1);
+        } catch (Throwable ignored) {
+            sounds = null;
+        }
+    }
+
+    /** PC側と同じ合成クリック音をWAVファイルにする */
+    private String writeClick(String name, boolean big) throws Exception {
+        int rate = 44100;
+        double dur = big ? 0.040 : 0.028, freq = big ? 1300 : 2400;
+        int n = (int) (dur * rate);
+        Random rng = new Random(1);
+        byte[] b = new byte[44 + n * 2];
+        String hdr = "RIFF";
+        System.arraycopy(hdr.getBytes("US-ASCII"), 0, b, 0, 4);
+        le32(b, 4, 36 + n * 2);
+        System.arraycopy("WAVEfmt ".getBytes("US-ASCII"), 0, b, 8, 8);
+        le32(b, 16, 16);
+        le16(b, 20, 1);
+        le16(b, 22, 1);
+        le32(b, 24, rate);
+        le32(b, 28, rate * 2);
+        le16(b, 32, 2);
+        le16(b, 34, 16);
+        System.arraycopy("data".getBytes("US-ASCII"), 0, b, 36, 4);
+        le32(b, 40, n * 2);
+        for (int i = 0; i < n; i++) {
+            double t = i / (double) rate;
+            double env = Math.exp(-t / 0.006);
+            double tone = Math.sin(2 * Math.PI * freq * t) * Math.exp(-t / 0.010);
+            double noise = (rng.nextDouble() * 2 - 1) * env;
+            double v = Math.max(-1, Math.min(1, (0.55 * noise + 0.45 * tone) * 0.9));
+            le16(b, 44 + i * 2, (int) (v * 32767));
+        }
+        File f = new File(getCacheDir(), name);
+        FileOutputStream os = new FileOutputStream(f);
+        os.write(b);
+        os.close();
+        return f.getAbsolutePath();
+    }
+
+    private static void le16(byte[] b, int o, int v) {
+        b[o] = (byte) v;
+        b[o + 1] = (byte) (v >> 8);
+    }
+
+    private static void le32(byte[] b, int o, int v) {
+        le16(b, o, v);
+        le16(b, o + 2, v >> 16);
+    }
+
+    private void playClick(boolean big, int vol) {
+        if (sounds == null) return;
+        float v = Math.max(0, Math.min(1, vol / 100f));
+        sounds.play(big ? clickBig : clickSmall, v, v, 1, 0, 1);
     }
 
     // ===== 接続設定画面 =====
@@ -212,7 +231,7 @@ public class MainActivity extends Activity implements Client.Listener, PadView.H
         b.setAllCaps(false);
         b.setTextSize(17);
         b.setOnClickListener(l);
-        LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(-1, dp(54));
+        LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(-1, dp(52));
         lp.topMargin = dp(8);
         parent.addView(b, lp);
         return b;
@@ -226,6 +245,7 @@ public class MainActivity extends Activity implements Client.Listener, PadView.H
         e.setHintTextColor(Color.rgb(120, 120, 130));
         e.setTextSize(20);
         e.setSingleLine(true);
+        e.setImeOptions(0x02000000 /* IME_FLAG_NO_EXTRACT_UI: 横向きでも全画面入力にしない */);
         parent.addView(e, new LinearLayout.LayoutParams(-1, -2));
         return e;
     }
@@ -233,16 +253,25 @@ public class MainActivity extends Activity implements Client.Listener, PadView.H
     private ScrollView buildSetup() {
         ScrollView sv = new ScrollView(this);
         sv.setBackgroundColor(Color.rgb(21, 22, 27));
+        LinearLayout cols = new LinearLayout(this);
+        cols.setOrientation(LinearLayout.HORIZONTAL);
+        cols.setPadding(dp(24), dp(16), dp(24), dp(24));
+        sv.addView(cols);
+        // 横向きなので左右2列
         LinearLayout ll = new LinearLayout(this);
         ll.setOrientation(LinearLayout.VERTICAL);
-        ll.setPadding(dp(22), dp(28), dp(22), dp(40));
-        sv.addView(ll);
+        LinearLayout rr = new LinearLayout(this);
+        rr.setOrientation(LinearLayout.VERTICAL);
+        LinearLayout.LayoutParams half = new LinearLayout.LayoutParams(0, -2, 1);
+        half.rightMargin = dp(20);
+        cols.addView(ll, half);
+        cols.addView(rr, new LinearLayout.LayoutParams(0, -2, 1));
 
-        label(ll, "PhoneBoard", 28, true);
-        statusView = label(ll, "", 16, false);
+        label(ll, "PhoneBoard", 26, true);
+        statusView = label(ll, "", 15, false);
         statusView.setTextColor(Color.rgb(255, 200, 61));
 
-        label(ll, "1. PCを選ぶ", 18, true);
+        label(ll, "1. PCを選ぶ", 17, true);
         button(ll, "同じWi-FiのPCを探す", new View.OnClickListener() {
             public void onClick(View v) { discover(); }
         });
@@ -252,12 +281,16 @@ public class MainActivity extends Activity implements Client.Listener, PadView.H
         hostEdit = edit(ll, "PCのIPアドレス（例 192.168.1.10）", InputType.TYPE_CLASS_TEXT | InputType.TYPE_TEXT_VARIATION_URI);
         hostEdit.setText(prefs.getString("host", ""));
 
-        label(ll, "2. PC画面に表示されたPIN", 18, true);
+        label(ll, "2. PC画面に表示されたPIN", 17, true);
         pinEdit = edit(ll, "PIN（4桁）", InputType.TYPE_CLASS_NUMBER);
         pinEdit.setText(prefs.getString("pin", ""));
 
         button(ll, "接続する", new View.OnClickListener() {
             public void onClick(View v) { connectFromForm(); }
+        });
+
+        backButton = button(rr, "操作画面に戻る", new View.OnClickListener() {
+            public void onClick(View v) { showSetup(false); }
         });
 
         dimCheck = new CheckBox(this);
@@ -272,40 +305,15 @@ public class MainActivity extends Activity implements Client.Listener, PadView.H
         });
         LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(-1, -2);
         lp.topMargin = dp(14);
-        ll.addView(dimCheck, lp);
+        rr.addView(dimCheck, lp);
 
-        label(ll, "3. キーボード画面をPCに映す（任意）", 18, true);
-        TextView mh = label(ll, "Gboardの画面をPCに映します。許可の画面では「画面全体」を選んでください。"
-                + "開発者向けオプションの「タップを表示」をオンにすると、指の位置も映ります。", 14, false);
-        mh.setTextColor(Color.rgb(160, 162, 178));
-        captureButton = button(ll, "画面の共有を許可する", new View.OnClickListener() {
-            public void onClick(View v) {
-                if (CaptureService.running) stopService(new Intent(MainActivity.this, CaptureService.class));
-                else requestCapture();
-                ui.postDelayed(new Runnable() { public void run() { updateCaptureButton(); } }, 300);
-            }
-        });
-        button(ll, "「タップを表示」の設定を開く（開発者向けオプション）", new View.OnClickListener() {
-            public void onClick(View v) {
-                try {
-                    startActivity(new Intent(Settings.ACTION_APPLICATION_DEVELOPMENT_SETTINGS));
-                } catch (Exception e) {
-                    statusView.setText("開発者向けオプションが無効です。設定→デバイス情報→ビルド番号を7回タップで有効になります");
-                }
-            }
-        });
-
-        backButton = button(ll, "操作画面に戻る", new View.OnClickListener() {
-            public void onClick(View v) { showSetup(false); }
-        });
-
-        TextView help = label(ll,
-                "使い方（スマホは見ずに親指1本で）\n" +
-                "・音量↑ : マウス ⇔ キーボード\n" +
-                "・マウス : なぞる=カーソル / タップ=左クリック / 右端の帯=スクロール / 下段=キーボード・左右切替・右クリック。音量↓を押している間は左ボタン押しっぱなし\n" +
-                "・ダブルタップしてそのままなぞる=ドラッグ\n" +
-                "・キーボード : スマホのキーボード（Gboard等）がそのまま開きます。変換中の文字はPC画面に表示され、確定するとPCに入力されます。キーボードを閉じる（戻る）とマウスに戻ります\n" +
-                "・画面の左上隅を2秒長押し : この画面\n" +
+        TextView help = label(rr,
+                "使い方（横向き・両手の親指で。スマホは見なくてOK）\n" +
+                "・左上の角のボタン / 音量↑ : マウス ⇔ キーボード\n" +
+                "・キーボード : 指を置くとPC画面に指の位置とキーが表示されます。離した時に入力（置いたまま滑らせて直せる）。最上段の空いた所で離すと取り消し\n" +
+                "・Shift/Ctrl/Alt/Win/Fn : 1回押すと次のキーに効く、2回で固定\n" +
+                "・マウス : パッドでカーソル、タップ=左クリック、2本指=スクロール、2本指でトン=右クリック。左端のボタンは押している間ボタンを押しっぱなし（もう片方の指でドラッグ）\n" +
+                "・3本指で2秒押さえる / 戻る : この画面\n" +
                 "・配置や動作はPCの設定画面（タスクトレイのアイコン）で変更できます",
                 14, false);
         help.setTextColor(Color.rgb(160, 162, 178));
@@ -331,7 +339,7 @@ public class MainActivity extends Activity implements Client.Listener, PadView.H
 
     private void discover() {
         foundList.removeAllViews();
-        final TextView t = label(foundList, "探しています…", 15, false);
+        label(foundList, "探しています…", 15, false);
         new Thread(new Runnable() {
             public void run() {
                 final List<Client.Found> list = Client.discover(MainActivity.this, 2000);
@@ -365,7 +373,6 @@ public class MainActivity extends Activity implements Client.Listener, PadView.H
     private void showSetup(boolean show) {
         setup.setVisibility(show ? View.VISIBLE : View.GONE);
         if (!show) hideKeyboard();
-        if (capture != null && pad != null && client != null) updatePhoneKeyboard();
         backButton.setVisibility(client != null && client.isConnected() ? View.VISIBLE : View.GONE);
         applyBrightness();
         hideSystemUi();
@@ -378,106 +385,11 @@ public class MainActivity extends Activity implements Client.Listener, PadView.H
         getWindow().setAttributes(lp);
     }
 
-    private void requestCapture() {
-        captureAsked = true;
-        try {
-            MediaProjectionManager mpm = (MediaProjectionManager) getSystemService(Context.MEDIA_PROJECTION_SERVICE);
-            startActivityForResult(mpm.createScreenCaptureIntent(), REQ_CAPTURE);
-        } catch (Exception ignored) {
-        }
-    }
-
-    @Override
-    protected void onActivityResult(int req, int res, Intent data) {
-        super.onActivityResult(req, res, data);
-        if (req != REQ_CAPTURE) return;
-        if (res == RESULT_OK && data != null) {
-            Intent i = new Intent(this, CaptureService.class);
-            i.putExtra(CaptureService.EXTRA_CODE, res);
-            i.putExtra(CaptureService.EXTRA_DATA, data);
-            if (Build.VERSION.SDK_INT >= 26) startForegroundService(i);
-            else startService(i);
-        }
-        ui.postDelayed(new Runnable() { public void run() { updateCaptureButton(); } }, 500);
-        hideSystemUi();
-    }
-
-    private void updateCaptureButton() {
-        if (captureButton != null) {
-            captureButton.setText(CaptureService.running ? "画面の共有を止める（共有中）" : "画面の共有を許可する");
-        }
-    }
-
-    /** キーボード（IME）の高さを調べて、映す範囲と送信のON/OFFを決める */
-    private void updateMirrorState() {
-        boolean on = mirrorWanted && pad.usesPhoneKeyboard() && client.isConnected() && setup.getVisibility() != View.VISIBLE;
-        if (on) {
-            float top = 0.55f;
-            int imeH = 0;
-            View decor = getWindow().getDecorView();
-            if (Build.VERSION.SDK_INT >= 30) {
-                WindowInsets wi = decor.getRootWindowInsets();
-                if (wi != null) imeH = wi.getInsets(WindowInsets.Type.ime()).bottom;
-            }
-            int full = getResources().getDisplayMetrics().heightPixels;
-            DisplayMetricsHolder.real(this);
-            if (DisplayMetricsHolder.h > 0) full = DisplayMetricsHolder.h;
-            if (imeH > 0 && full > 0) top = Math.max(0.05f, (full - imeH) / (float) full - 0.01f);
-            CaptureService.cropTop = top;
-        }
-        CaptureService.active = on;
-    }
-
-    static class DisplayMetricsHolder {
-        static int h;
-        static void real(Activity a) {
-            if (h > 0) return;
-            android.util.DisplayMetrics dm = new android.util.DisplayMetrics();
-            a.getWindowManager().getDefaultDisplay().getRealMetrics(dm);
-            h = dm.heightPixels;
-        }
-    }
-
-    private void sendText(String t, String text) {
-        try {
-            JSONObject o = new JSONObject();
-            o.put("t", t);
-            o.put("text", text);
-            client.send(o);
-        } catch (Exception ignored) {
-        }
-    }
-
-    /** モードに合わせてスマホのキーボード（Gboard等）を出す/しまう */
-    private void updatePhoneKeyboard() {
-        final InputMethodManager imm = (InputMethodManager) getSystemService(Context.INPUT_METHOD_SERVICE);
-        if (imm == null) return;
-        boolean want = pad.usesPhoneKeyboard() && client.isConnected() && setup.getVisibility() != View.VISIBLE;
-        if (want) {
-            capture.setFocusable(true);
-            capture.setFocusableInTouchMode(true);
-            capture.requestFocus();
-            Runnable show = new Runnable() {
-                public void run() {
-                    if (!pad.usesPhoneKeyboard()) return;
-                    capture.requestFocus();
-                    imm.showSoftInput(capture, 0);
-                }
-            };
-            capture.postDelayed(show, 120);
-            capture.postDelayed(show, 500); // 1回目で開かない端末向け
-        } else if (capture.hasFocus()) {
-            imm.hideSoftInputFromWindow(capture.getWindowToken(), 0);
-            capture.clearFocus();
-            capture.setFocusable(false);
-        }
-    }
-
     // ===== Client.Listener =====
 
     @Override
     public void onStatus(String text, boolean connected) {
-        boolean was = pad != null && lastStatus.startsWith("接続済み");
+        boolean was = lastStatus.startsWith("接続済み");
         lastStatus = text;
         statusView.setText(text);
         pad.setConnected(connected, text);
@@ -508,21 +420,12 @@ public class MainActivity extends Activity implements Client.Listener, PadView.H
         String t = m.optString("t");
         if ("cfg".equals(t)) {
             pad.applyCfg(m);
-            JSONObject kb = m.optJSONObject("kb");
-            if (kb != null) {
-                mirrorWanted = kb.optBoolean("mirror", false) && "gboard".equals(kb.optString("input"));
-                CaptureService.fps = kb.optInt("mirrorFps", 15);
-                CaptureService.width = kb.optInt("mirrorWidth", 540);
-                CaptureService.quality = kb.optInt("mirrorQuality", 60);
-                // 映す設定なのに未許可なら、接続直後（まだスマホを見ている時）に1回だけ許可を求める
-                if (mirrorWanted && !CaptureService.running && !captureAsked) requestCapture();
-            }
-            updatePhoneKeyboard();
         } else if ("setmode".equals(t)) {
             pad.setMode(m.optString("m", "mouse"));
-            updatePhoneKeyboard();
         } else if ("state".equals(t)) {
             pad.setState(m);
+        } else if ("click".equals(t)) {
+            playClick(m.optBoolean("big", false), m.optInt("vol", 60));
         } else if ("vib".equals(t)) {
             int amp = m.optInt("amp", 200);
             JSONArray pat = m.optJSONArray("pat");
@@ -554,15 +457,11 @@ public class MainActivity extends Activity implements Client.Listener, PadView.H
         if (vibrator == null || ms <= 0) return;
         try {
             if (Build.VERSION.SDK_INT >= 26) {
-                Class<?> ve = Class.forName("android.os.VibrationEffect");
-                Object eff = ve.getMethod("createOneShot", long.class, int.class).invoke(null, ms, Math.max(1, Math.min(255, amp)));
-                Method m = Vibrator.class.getMethod("vibrate", ve);
-                m.invoke(vibrator, eff);
+                vibrator.vibrate(VibrationEffect.createOneShot(ms, Math.max(1, Math.min(255, amp))));
             } else {
                 vibrator.vibrate(ms);
             }
-        } catch (Throwable e) {
-            try { vibrator.vibrate(ms); } catch (Throwable ignored) { }
+        } catch (Throwable ignored) {
         }
     }
 
@@ -573,14 +472,11 @@ public class MainActivity extends Activity implements Client.Listener, PadView.H
             if (Build.VERSION.SDK_INT >= 26) {
                 int[] amps = new int[pattern.length];
                 for (int i = 0; i < amps.length; i++) amps[i] = (i % 2 == 1) ? Math.max(1, Math.min(255, amp)) : 0;
-                Class<?> ve = Class.forName("android.os.VibrationEffect");
-                Object eff = ve.getMethod("createWaveform", long[].class, int[].class, int.class).invoke(null, pattern, amps, -1);
-                Vibrator.class.getMethod("vibrate", ve).invoke(vibrator, eff);
+                vibrator.vibrate(VibrationEffect.createWaveform(pattern, amps, -1));
             } else {
                 vibrator.vibrate(pattern, -1);
             }
-        } catch (Throwable e) {
-            try { vibrator.vibrate(pattern, -1); } catch (Throwable ignored) { }
+        } catch (Throwable ignored) {
         }
     }
 

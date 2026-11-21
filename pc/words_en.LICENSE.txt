@@ -1,0 +1,14 @@
+words_en.txt.gz（英単語と出現頻度、上位約28,000語）について
+
+このファイルは wordfreq 3.1.1（Robyn Speer 他, https://github.com/rspeer/wordfreq）の
+small_en データから、英小文字のみの単語を抜き出して頻度を整数化したものです。
+
+wordfreq のデータは Creative Commons Attribution-ShareAlike 4.0 で配布されています。
+  https://creativecommons.org/licenses/by-sa/4.0/
+このファイルも同じ CC BY-SA 4.0 で配布します。
+
+wordfreq のデータには以下の出典のデータが含まれます:
+  Google Books Ngrams (http://books.google.com/ngrams), Leeds Internet Corpus,
+  Wikipedia, ParaCrawl, OPUS OpenSubtitles 2018 (http://www.opensubtitles.org/),
+  SUBTLEX (Marc Brysbaert et al.), Twitter, Reddit, CC-100 など。
+詳細は wordfreq の README を参照してください。

@@ -1,14 +1,8 @@
 package main
 
 import (
-	"bytes"
-	"encoding/base64"
-	"image"
-	"image/draw"
-	"image/jpeg"
 	"log"
 	"math"
-	"strings"
 	"sync"
 	"time"
 )
@@ -40,14 +34,18 @@ type Msg struct {
 	Dy   float64 `json:"dy"`
 	N    int     `json:"n"`
 	Z    int     `json:"z"`
+	ID   int     `json:"id"`
 	Wdp  float64 `json:"wdp"`
 	Hdp  float64 `json:"hdp"`
 	Name string  `json:"name"`
 	Pin  string  `json:"pin"`
 	V    int     `json:"v"`
-	Ts   int64   `json:"ts"` // スマホ側のタッチ時刻(ms)
-	Text string  `json:"text"`
-	Jpg  string  `json:"jpg"`
+	Ts   int64   `json:"ts"`
+}
+
+// Clicker はPCでクリック音を鳴らす（Windows: sound_windows.go）。
+type Clicker interface {
+	Click(big bool, volume int)
 }
 
 type App struct {
@@ -55,21 +53,22 @@ type App struct {
 	cfg        *Config
 	lay        *Layouts
 	inj        Injector
-	eng        *Engine
-	typ        *Typist
+	kbd        *Kbd
 	ov         *OverlayModel
 	sess       Sender
 	phone      PhoneInfo
 	mode       string // mouse / keyboard
-	kbIndex    int
 	tapRight   bool
 	scrollMode bool
 	held       map[int]bool
 	fx, fy     float64
 	wy, wx     float64
 	webURL     string
-	tsOff      int64
 	start      time.Time
+	history    []rune
+	imeOn      bool
+	imeAt      time.Time
+	clicker    Clicker
 	OpenURL    func(string)
 }
 
@@ -78,62 +77,53 @@ func NewApp(cfg *Config, lay *Layouts, inj Injector) *App {
 		cfg:   cfg,
 		lay:   lay,
 		inj:   inj,
-		typ:   NewTypist(inj),
 		ov:    &OverlayModel{},
 		mode:  "mouse",
 		held:  map[int]bool{},
-		phone: PhoneInfo{Wdp: 400, Hdp: 860},
+		phone: PhoneInfo{Wdp: 915, Hdp: 412},
 		start: time.Now(),
 	}
-	a.eng = NewEngine(a.onEngine)
-	a.eng.Clock = a.now
+	a.kbd = NewKbd(a)
+	a.kbd.IME = func() bool { return a.imeOn }
+	a.clicker = NewClicker()
 	a.applyLocked()
 	return a
 }
 
 func (a *App) now() int64 { return time.Since(a.start).Milliseconds() }
 
-func (a *App) curKb() *KbLayout {
-	if a.kbIndex < 0 || a.kbIndex >= len(a.lay.Keyboards) {
-		a.kbIndex = 0
-	}
-	return &a.lay.Keyboards[a.kbIndex]
-}
-
-// applyLocked は設定・配列の変更をエンジンとオーバーレイへ反映する。
+// applyLocked は設定・配列の変更をキーボードとオーバーレイへ反映する。
 func (a *App) applyLocked() {
-	kb := a.curKb()
-	a.eng.Configure(a.cfg.Keyboard, kb, a.lay.Region, a.phone.Wdp, a.phone.Hdp)
-	a.typ.Configure(a.cfg.Keyboard)
+	a.kbd.Configure(a.cfg.Keyboard, &a.lay.Board)
 	a.refreshOverlayLocked()
 }
 
 func (a *App) refreshOverlayLocked() {
-	kb := *a.curKb()
-	aspect := 1.0
-	if a.lay.Region.H > 0 {
-		aspect = (a.lay.Region.W * a.phone.Wdp) / (a.lay.Region.H * a.phone.Hdp)
+	view := a.kbd.View()
+	flash := a.kbd.TakeFlash()
+	hist := a.history
+	if len(hist) > 40 {
+		hist = hist[len(hist)-40:]
 	}
-	snap := a.eng.Snap()
-	hist := a.typ.History()
-	caps := a.typ.Caps()
 	a.ov.Update(func(m *OverlayData) {
 		m.Cfg = a.cfg.Overlay
-		m.KbStyle = a.cfg.Keyboard.Style
-		m.Input = a.cfg.Keyboard.Input
-		m.MirrorScale = a.cfg.Keyboard.MirrorScale
-		if !a.cfg.Keyboard.Mirror {
-			m.Frame = nil
-		}
 		m.KbVisible = a.mode == "keyboard" && a.sess != nil
-		m.Layout = kb
-		m.Aspect = aspect
-		m.Snap = snap
-		m.Title = kb.Title
-		m.History = hist
-		m.Caps = caps
+		m.Board = a.lay.Board
+		m.Aspect = a.phone.Wdp / math.Max(a.phone.Hdp, 1)
+		if m.Aspect < 1 { // 横向き専用なので、縦長の寸法が来ても横長として扱う
+			m.Aspect = 1 / math.Max(m.Aspect, 0.01)
+		}
+		m.Kbd = view
+		now := time.Now()
+		for _, i := range flash {
+			if m.Flash == nil {
+				m.Flash = map[int]time.Time{}
+			}
+			m.Flash[i] = now
+		}
+		m.History = string(hist)
+		m.IME = a.imeOn
 		m.Zones = a.lay.MouseZones
-		m.PhoneAspect = a.phone.Wdp / math.Max(a.phone.Hdp, 1)
 		m.TapRight = a.tapRight
 		m.ScrollMode = a.scrollMode
 		m.Connected = a.sess != nil
@@ -162,22 +152,13 @@ func (a *App) vib(kind string) {
 	switch kind {
 	case "hover":
 		ms = h.HoverMs
-	case "arm":
-		ms = h.ArmMs
-	case "dir":
-		ms = h.DirMs
 	case "commit":
 		ms = h.CommitMs
-	case "toggle":
+	case "toggle", "mod":
 		ms = h.ToggleMs
 	case "cancel":
-		if h.HoverMs > 0 {
+		if h.CommitMs > 0 {
 			a.send(map[string]any{"t": "vib", "pat": []int{0, 12, 60, 12}, "amp": h.Amp})
-		}
-		return
-	case "double":
-		if h.ToggleMs > 0 {
-			a.send(map[string]any{"t": "vib", "pat": []int{0, h.ToggleMs, 80, h.ToggleMs}, "amp": h.Amp})
 		}
 		return
 	}
@@ -186,41 +167,76 @@ func (a *App) vib(kind string) {
 	}
 }
 
-// エンジンからのイベント（App のロック中に呼ばれる）
-func (a *App) onEngine(ev EngineEvent) {
-	switch ev.Kind {
-	case "haptic":
-		a.vib(ev.Haptic)
-	case "commit":
-		a.doActionLocked(ev.Text, "tap")
-		a.ov.Update(func(m *OverlayData) {
-			m.Flash = ev.Text
-			if IsAction(ev.Text) {
-				m.Flash = actionLabel(ev.Text)
-			}
-			m.FlashAt = time.Now()
-		})
+// click はクリック音（設定に応じてPC/スマホ）。
+func (a *App) click(big bool) {
+	k := a.cfg.Keyboard
+	if k.ClickVolume <= 0 {
+		return
+	}
+	if (k.ClickSound == "pc" || k.ClickSound == "both") && a.clicker != nil {
+		a.clicker.Click(big, k.ClickVolume)
+	}
+	if k.ClickSound == "phone" || k.ClickSound == "both" {
+		a.send(map[string]any{"t": "click", "big": big, "vol": k.ClickVolume})
 	}
 }
 
-func actionLabel(s string) string {
-	n := actionName(s)
-	labels := map[string]string{
-		"BS": "削除", "ENTER": "改行", "SPACE": "空白", "LEFT": "←", "RIGHT": "→", "UP": "↑", "DOWN": "↓",
-		"CYCLE": "゛゜小", "DAKU": "゛", "HANDAKU": "゜", "SMALL": "小", "CASE": "a/A", "CAPS": "大文字",
-		"MODE_NEXT": "切替", "MOUSE": "マウス", "KEYBOARD": "キーボード", "TAB": "Tab", "ESC": "Esc", "DEL": "Del",
-		"HOME": "先頭", "END": "末尾", "PGUP": "PgUp", "PGDN": "PgDn",
-		"CTRL+Z": "戻す", "CTRL+C": "コピー", "CTRL+V": "貼付", "CTRL+X": "切取", "CTRL+A": "全選択", "CTRL+BS": "単語削除",
-		"SHIFT+ENTER": "Shift改行", "CTRL+ENTER": "Ctrl改行", "SHIFT+TAB": "Shift+Tab",
-		"F6": "ひら", "F7": "カナ", "F8": "半角", "F10": "英数",
-		"MODE:KANA": "かな", "MODE:ALPHA": "ABC", "MODE:NUM": "123",
-		"CLICK_L": "左クリック", "CLICK_R": "右クリック", "CLICK_M": "中クリック", "TAPMODE": "左右切替", "SCROLLMODE": "スクロール",
+// ===== キーボードエンジンからの出力（App のロック中に呼ばれる） =====
+
+func (a *App) KeyPress(mods []uint16, vk uint16, label string, letter rune) {
+	a.inj.KeyCombo(mods, vk)
+	big := vk == vkReturn || vk == vkSpace || vk == vkBack
+	a.click(big)
+	a.vib("commit")
+	// 表示用の入力履歴（あくまで目安）
+	switch {
+	case vk == vkBack:
+		if len(a.history) > 0 {
+			a.history = a.history[:len(a.history)-1]
+		}
+	case vk == vkReturn:
+		a.history = append(a.history, '⏎')
+	case vk == vkSpace:
+		a.history = append(a.history, '␣')
+	case len(mods) == 0 || (len(mods) == 1 && mods[0] == modVK["shift"]):
+		if r := []rune(label); len(r) == 1 {
+			a.history = append(a.history, r[0])
+		}
 	}
-	if l, ok := labels[n]; ok {
-		return l
+	if len(a.history) > 200 {
+		a.history = append([]rune{}, a.history[100:]...)
 	}
-	return n
+	if vk == 0x19 { // 半/全 → IMEの状態がすぐ変わる
+		a.imeAt = time.Time{}
+	}
 }
+
+func (a *App) ModKey(vk uint16, down bool) {
+	if down {
+		a.inj.KeyDown(vk)
+	} else {
+		a.inj.KeyUp(vk)
+	}
+}
+
+func (a *App) Action(s string) {
+	a.click(false)
+	a.doActionLocked(s, "tap")
+}
+
+func (a *App) Feedback(kind string) {
+	switch kind {
+	case "hover":
+		a.vib("hover")
+	case "mod":
+		a.vib("mod")
+		a.click(false)
+	case "cancel":
+		a.vib("cancel")
+	}
+}
+
+// ===== アクション =====
 
 func isClickAction(name string) (int, bool) {
 	switch name {
@@ -234,16 +250,14 @@ func isClickAction(name string) (int, bool) {
 	return 0, false
 }
 
-// doActionLocked はアクション/文字を実行する。phase: tap / down / up
+// doActionLocked はアクションを実行する。phase: tap / down / up
 func (a *App) doActionLocked(s string, phase string) {
 	if !IsAction(s) {
-		if phase != "up" {
-			a.typ.Commit(s)
-		}
 		return
 	}
 	name := actionName(s)
 	if btn, ok := isClickAction(name); ok {
+		a.kbd.ResetContext()
 		switch phase {
 		case "down":
 			a.inj.MouseButton(btn, true)
@@ -260,73 +274,55 @@ func (a *App) doActionLocked(s string, phase string) {
 	if phase == "up" {
 		return
 	}
-	switch {
-	case name == "MOUSE":
+	switch name {
+	case "MOUSE":
 		a.setModeLocked("mouse")
-	case name == "KEYBOARD":
+	case "KEYBOARD":
 		a.setModeLocked("keyboard")
-	case name == "TOGGLE":
+	case "TOGGLE":
 		if a.mode == "mouse" {
 			a.setModeLocked("keyboard")
 		} else {
 			a.setModeLocked("mouse")
 		}
-	case name == "MODE_NEXT":
-		a.setKbLocked((a.kbIndex + 1) % len(a.lay.Keyboards))
-	case strings.HasPrefix(name, "MODE:"):
-		want := strings.ToLower(strings.TrimPrefix(name, "MODE:"))
-		for i := range a.lay.Keyboards {
-			if strings.ToLower(a.lay.Keyboards[i].Name) == want {
-				a.setKbLocked(i)
-				break
-			}
-		}
-	case name == "TAPMODE":
+	case "TAPMODE":
 		a.tapRight = !a.tapRight
-		a.vib("double")
+		a.vib("toggle")
 		if a.tapRight {
 			a.toast("タップ = 右クリック")
 		} else {
 			a.toast("タップ = 左クリック")
 		}
 		a.sendStateLocked()
-	case name == "SCROLLMODE":
+	case "SCROLLMODE":
 		a.scrollMode = !a.scrollMode
-		a.vib("double")
+		a.vib("toggle")
 		if a.scrollMode {
 			a.toast("パッド = スクロール")
 		} else {
 			a.toast("パッド = カーソル移動")
 		}
 		a.sendStateLocked()
-	case name == "DBLCLICK":
+	case "DBLCLICK":
 		for i := 0; i < 2; i++ {
 			a.inj.MouseButton(0, true)
 			a.inj.MouseButton(0, false)
 		}
-	case name == "SETTINGS":
+	case "SETTINGS":
 		if a.OpenURL != nil && a.webURL != "" {
 			go a.OpenURL(a.webURL)
 		}
-	case name == "CLEAR":
-		a.typ.ClearHistory()
+	case "CLEAR":
+		a.history = a.history[:0]
+	case "NONE", "":
 	default:
-		a.typ.Commit(s)
+		if mods, vk, ok := ParseCombo(name); ok {
+			a.inj.KeyCombo(mods, vk)
+			if vk == 0x19 {
+				a.imeAt = time.Time{}
+			}
+		}
 	}
-	a.refreshOverlayLocked()
-}
-
-func (a *App) setKbLocked(i int) {
-	if i < 0 || i >= len(a.lay.Keyboards) {
-		return
-	}
-	a.kbIndex = i
-	kb := a.curKb()
-	a.eng.Configure(a.cfg.Keyboard, kb, a.lay.Region, a.phone.Wdp, a.phone.Hdp)
-	a.typ.SetKind(kb.Kind)
-	a.vib("toggle")
-	a.toast("キーボード: " + kb.Title)
-	a.sendCfgLocked()
 	a.refreshOverlayLocked()
 }
 
@@ -335,15 +331,11 @@ func (a *App) setModeLocked(m string) {
 		return
 	}
 	a.mode = m
-	a.eng.Cancel()
+	a.kbd.CancelAll()
+	a.kbd.ResetContext()
 	a.releaseHeldLocked()
-	if m == "keyboard" && a.gboard() {
-		a.typ.SetKind("direct") // PCのIMEはOFFに（変換はスマホ側で済ませる）
-		a.ov.Update(func(o *OverlayData) { o.Comp = "" })
-		a.toast("キーボード（スマホ）")
-	} else if m == "keyboard" {
-		a.typ.SetKind(a.curKb().Kind)
-		a.toast("キーボード: " + a.curKb().Title)
+	if m == "keyboard" {
+		a.toast("キーボード")
 	} else {
 		a.toast("マウス")
 	}
@@ -351,8 +343,6 @@ func (a *App) setModeLocked(m string) {
 	a.send(map[string]any{"t": "setmode", "m": m})
 	a.refreshOverlayLocked()
 }
-
-func (a *App) gboard() bool { return a.cfg.Keyboard.Input == "gboard" }
 
 func (a *App) releaseHeldLocked() {
 	for b := range a.held {
@@ -377,9 +367,9 @@ func (a *App) sendCfgLocked() {
 	if a.sess == nil {
 		return
 	}
-	kb := a.curKb()
-	keys := make([]keyView, 0, len(kb.Keys))
-	for _, k := range kb.Keys {
+	b := &a.lay.Board
+	keys := make([]keyView, 0, len(b.Keys))
+	for _, k := range b.Keys {
 		keys = append(keys, keyView{k.Label, k.X, k.Y, k.W, k.H})
 	}
 	m := a.cfg.Mouse
@@ -390,11 +380,7 @@ func (a *App) sendCfgLocked() {
 			"longPress": m.LongPress, "longPressMs": m.LongPressMs, "momentum": m.Momentum,
 			"miniMap": a.cfg.Overlay.MiniMap,
 		},
-		"kb": map[string]any{
-			"input": a.cfg.Keyboard.Input, "mirror": a.cfg.Keyboard.Mirror, "mirrorFps": a.cfg.Keyboard.MirrorFps,
-			"mirrorWidth": a.cfg.Keyboard.MirrorWidth, "mirrorQuality": a.cfg.Keyboard.MirrorQuality,
-			"title": kb.Title, "cols": kb.Cols, "rows": kb.Rows, "keys": keys, "region": a.lay.Region,
-		},
+		"kb":     map[string]any{"cols": b.Cols, "rows": b.Rows, "keys": keys},
 		"haptic": a.cfg.Haptic.Enabled,
 	})
 	a.sendStateLocked()
@@ -416,7 +402,6 @@ func (a *App) OnConnect(s Sender, info PhoneInfo) {
 		a.phone.Name = info.Name
 	}
 	a.mode = "mouse"
-	a.eng.Cancel()
 	a.applyLocked()
 	a.sendCfgLocked()
 	a.send(map[string]any{"t": "setmode", "m": a.mode})
@@ -431,7 +416,7 @@ func (a *App) OnDisconnect(s Sender) {
 		return
 	}
 	a.sess = nil
-	a.eng.Cancel()
+	a.kbd.CancelAll()
 	a.releaseHeldLocked()
 	a.refreshOverlayLocked()
 	a.toast("スマホ切断")
@@ -447,30 +432,21 @@ func (a *App) Handle(s Sender, m *Msg) {
 	}
 	t := a.now()
 	switch m.T {
-	case "kt": // キーボードモードのタッチ
+	case "kt": // キーボードのタッチ（指ごと）
 		if a.mode != "keyboard" {
 			return
 		}
-		// スマホ側の時刻を使う（Wi-Fiの遅延の揺れで速さの判定が狂わないように）
-		if m.Ts > 0 {
-			if m.A == "d" || a.tsOff == 0 {
-				a.tsOff = t - m.Ts
-			}
-			if mt := m.Ts + a.tsOff; mt <= t {
-				t = mt
-			} else {
-				a.tsOff = t - m.Ts
-			}
-		}
 		switch m.A {
 		case "d":
-			a.eng.Down(m.X, m.Y, t)
+			a.kbd.Down(m.ID, m.X, m.Y, t)
 		case "m":
-			a.eng.Move(m.X, m.Y, t)
+			a.kbd.Move(m.ID, m.X, m.Y, t)
 		case "u":
-			a.eng.Up(m.X, m.Y, t)
+			a.kbd.Up(m.ID, m.X, m.Y, t)
 		default:
-			a.eng.Cancel()
+			if f, ok := a.kbd.fingers[m.ID]; ok {
+				a.kbd.release(f, false)
+			}
 		}
 		a.refreshOverlayLocked()
 	case "mm":
@@ -478,6 +454,7 @@ func (a *App) Handle(s Sender, m *Msg) {
 	case "ms":
 		a.scrollLocked(m.Dx, m.Dy)
 	case "tap":
+		a.kbd.ResetContext()
 		btn := 0
 		switch {
 		case m.B == "r":
@@ -525,8 +502,8 @@ func (a *App) Handle(s Sender, m *Msg) {
 	case "act":
 		a.doActionLocked(m.A, "tap")
 	case "hw": // 音量キー
-		act := ""
 		up := m.K == "volup"
+		var act string
 		if a.mode == "keyboard" {
 			act = map[bool]string{true: a.cfg.Buttons.KbVolUp, false: a.cfg.Buttons.KbVolDown}[up]
 		} else {
@@ -554,62 +531,11 @@ func (a *App) Handle(s Sender, m *Msg) {
 	case "size":
 		if m.Wdp > 0 && m.Hdp > 0 {
 			a.phone.Wdp, a.phone.Hdp = m.Wdp, m.Hdp
-			a.applyLocked()
-		}
-	case "comp": // スマホのキーボードで変換中の文字
-		a.ov.Update(func(o *OverlayData) { o.Comp = m.Text })
-	case "text": // スマホのキーボードで確定した文字
-		a.ov.Update(func(o *OverlayData) { o.Comp = "" })
-		if m.Text != "" {
-			a.typ.CommitDirect(m.Text)
-			a.ov.Update(func(o *OverlayData) {
-				o.Flash = strings.ReplaceAll(m.Text, "\n", "⏎")
-				o.FlashAt = time.Now()
-			})
-			a.refreshOverlayLocked()
-		}
-	case "key": // スマホのキーボードの特殊キー（BS/ENTER/矢印など）
-		if _, _, ok := ParseCombo(strings.ToUpper(m.K)); ok {
-			a.typ.Commit("{" + strings.ToUpper(m.K) + "}")
 			a.refreshOverlayLocked()
 		}
 	case "ping":
 		a.send(map[string]any{"t": "pong"})
 	}
-}
-
-// Frame はスマホから届いたキーボード画面（BGRA、上から下）。
-type Frame struct {
-	W, H int
-	BGRA []byte
-	At   time.Time
-}
-
-// HandleFrame はキーボード画面のJPEGを展開してPC画面表示用に保持する（Appのロックの外で呼ぶ）。
-func (a *App) HandleFrame(s Sender, m *Msg) {
-	a.mu.Lock()
-	ok := a.sess == s && a.mode == "keyboard" && a.cfg.Keyboard.Mirror
-	a.mu.Unlock()
-	if !ok || m.Jpg == "" {
-		return
-	}
-	raw, err := base64.StdEncoding.DecodeString(m.Jpg)
-	if err != nil {
-		return
-	}
-	img, err := jpeg.Decode(bytes.NewReader(raw))
-	if err != nil {
-		return
-	}
-	b := img.Bounds()
-	rgba := image.NewRGBA(image.Rect(0, 0, b.Dx(), b.Dy()))
-	draw.Draw(rgba, rgba.Bounds(), img, b.Min, draw.Src)
-	px := rgba.Pix
-	for i := 0; i+3 < len(px); i += 4 {
-		px[i], px[i+2] = px[i+2], px[i] // RGBA → BGRA
-	}
-	f := &Frame{W: b.Dx(), H: b.Dy(), BGRA: px, At: time.Now()}
-	a.ov.Update(func(o *OverlayData) { o.Frame = f })
 }
 
 func (a *App) mouseMoveLocked(dx, dy float64) {
@@ -660,17 +586,29 @@ func (a *App) scrollLocked(dx, dy float64) {
 	}
 }
 
-// TickLoop は確定待機・リピートの時間処理。
+// TickLoop はリピートとIME状態の確認。
 func (a *App) TickLoop() {
 	tk := time.NewTicker(10 * time.Millisecond)
 	defer tk.Stop()
 	for range tk.C {
 		a.mu.Lock()
-		if a.mode == "keyboard" && a.eng.state != stIdle {
-			before := a.eng.Snap()
-			a.eng.Tick(a.now())
-			if a.eng.Snap() != before {
-				a.refreshOverlayLocked()
+		if a.mode == "keyboard" && a.sess != nil {
+			if len(a.kbd.fingers) > 0 {
+				a.kbd.Tick(a.now())
+				if len(a.kbd.flash) > 0 {
+					a.refreshOverlayLocked()
+				}
+			}
+			if time.Since(a.imeAt) > 400*time.Millisecond {
+				a.imeAt = time.Now()
+				inj := a.inj
+				a.mu.Unlock()
+				on := inj.IMEOpen() // 他アプリへの問い合わせなのでロックの外で
+				a.mu.Lock()
+				if on != a.imeOn {
+					a.imeOn = on
+					a.refreshOverlayLocked()
+				}
 			}
 		}
 		a.mu.Unlock()
@@ -683,7 +621,6 @@ type Status struct {
 	Connected bool      `json:"connected"`
 	Phone     PhoneInfo `json:"phone"`
 	Mode      string    `json:"mode"`
-	Keyboard  string    `json:"keyboard"`
 	TapRight  bool      `json:"tapRight"`
 	IPs       []string  `json:"ips"`
 	Port      int       `json:"port"`
@@ -696,7 +633,7 @@ func (a *App) Status() Status {
 	a.mu.Lock()
 	defer a.mu.Unlock()
 	return Status{
-		Connected: a.sess != nil, Phone: a.phone, Mode: a.mode, Keyboard: a.curKb().Title,
+		Connected: a.sess != nil, Phone: a.phone, Mode: a.mode,
 		TapRight: a.tapRight, IPs: localIPs(), Port: a.cfg.Port, PIN: a.cfg.PIN, DataDir: dataDir(), Version: Version,
 	}
 }
@@ -727,6 +664,7 @@ func (a *App) Layouts() *Layouts {
 
 func (a *App) SetLayouts(l *Layouts) error {
 	l.Normalize()
+	l.Schema = layoutSchema
 	a.mu.Lock()
 	defer a.mu.Unlock()
 	a.lay = l
@@ -736,42 +674,32 @@ func (a *App) SetLayouts(l *Layouts) error {
 	return SaveLayouts(l)
 }
 
-func (a *App) Preview(name string) {
+// Preview はPC画面にキーボード表示を数秒出す（位置の確認用）。
+func (a *App) Preview() {
+	a.ov.Update(func(m *OverlayData) { m.PreviewUntil = time.Now().Add(4 * time.Second) })
+}
+
+// TestClick はクリック音を試しに鳴らす。
+func (a *App) TestClick() {
 	a.mu.Lock()
 	defer a.mu.Unlock()
-	if name != "" {
-		for i := range a.lay.Keyboards {
-			if a.lay.Keyboards[i].Name == name {
-				a.kbIndex = i
-				a.applyLocked()
-			}
-		}
-	}
-	a.ov.Update(func(m *OverlayData) { m.PreviewUntil = time.Now().Add(4 * time.Second) })
+	a.click(false)
 }
 
 // ===== オーバーレイ表示用モデル =====
 
 type OverlayData struct {
 	Cfg          OverlayCfg
-	KbStyle      string
-	Input        string
-	Comp         string
-	Frame        *Frame // スマホのキーボード画面（最新）
-	MirrorScale  float64
 	KbVisible    bool
-	Layout       KbLayout
+	Board        Board
 	Aspect       float64
-	Snap         EngineSnap
-	Title        string
+	Kbd          KbdView
+	Flash        map[int]time.Time
 	History      string
-	Caps         bool
-	Flash        string
-	FlashAt      time.Time
+	IME          bool
 	Toast        string
 	ToastAt      time.Time
 	Zones        []MouseZone
-	PhoneAspect  float64
 	MiniTouch    bool
 	MiniX, MiniY float64
 	MiniZone     int
@@ -799,5 +727,16 @@ func (o *OverlayModel) Update(f func(m *OverlayData)) {
 func (o *OverlayModel) Get() (OverlayData, uint64) {
 	o.mu.Lock()
 	defer o.mu.Unlock()
-	return o.d, o.ver
+	d := o.d
+	if o.d.Flash != nil {
+		d.Flash = map[int]time.Time{}
+		for k, v := range o.d.Flash {
+			if time.Since(v) < time.Second {
+				d.Flash[k] = v
+			} else {
+				delete(o.d.Flash, k)
+			}
+		}
+	}
+	return d, o.ver
 }

@@ -10,6 +10,7 @@ import (
 type LogInjector struct {
 	mu  sync.Mutex
 	Ops []string
+	IME bool
 }
 
 func (l *LogInjector) rec(s string) {
@@ -27,3 +28,4 @@ func (l *LogInjector) MouseMove(dx, dy int)              { l.rec(fmt.Sprintf("mo
 func (l *LogInjector) MouseButton(b int, down bool)      { l.rec(fmt.Sprintf("btn %d %v", b, down)) }
 func (l *LogInjector) Wheel(d int, h bool)               { l.rec(fmt.Sprintf("wheel %d h=%v", d, h)) }
 func (l *LogInjector) SetIME(open, kana bool)            { l.rec(fmt.Sprintf("ime %v", open)) }
+func (l *LogInjector) IMEOpen() bool                     { return l.IME }
