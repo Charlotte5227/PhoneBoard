@@ -60,7 +60,8 @@ public class PadView extends View {
 
     // PCから受け取る設定
     private String mode = "mouse";
-    private final List<Zone> zones = new ArrayList<Zone>();
+    private final List<Zone> mouseZones = new ArrayList<Zone>();
+    private final List<Zone> gameZones = new ArrayList<Zone>();
     private final List<KeyBox> keys = new ArrayList<KeyBox>();
     private float kbCols = 15, kbRows = 5.7f;
     private boolean tapDrag = true;
@@ -95,7 +96,7 @@ public class PadView extends View {
         text.setTextAlign(Paint.Align.CENTER);
         Zone z = new Zone();
         z.type = "pad"; z.label = "パッド"; z.x = 0; z.y = 0; z.w = 1; z.h = 1;
-        zones.add(z);
+        mouseZones.add(z);
         setKeepScreenOn(true);
     }
 
@@ -104,23 +105,10 @@ public class PadView extends View {
     public void applyCfg(JSONObject m) {
         try {
             JSONObject mo = m.optJSONObject("mouse");
+            JSONObject ga = m.optJSONObject("game");
+            if (ga != null) readZones(ga.optJSONArray("zones"), gameZones);
             if (mo != null) {
-                JSONArray zs = mo.optJSONArray("zones");
-                if (zs != null) {
-                    zones.clear();
-                    for (int i = 0; i < zs.length(); i++) {
-                        JSONObject o = zs.getJSONObject(i);
-                        Zone z = new Zone();
-                        z.type = o.optString("type", "pad");
-                        z.label = o.optString("label", "");
-                        z.action = o.optString("action", "");
-                        z.x = (float) o.optDouble("x", 0);
-                        z.y = (float) o.optDouble("y", 0);
-                        z.w = (float) o.optDouble("w", 1);
-                        z.h = (float) o.optDouble("h", 1);
-                        zones.add(z);
-                    }
-                }
+                readZones(mo.optJSONArray("zones"), mouseZones);
                 tapDrag = mo.optBoolean("tapDrag", true);
                 tapDelayMs = mo.optInt("tapDelayMs", 220);
                 longPress = mo.optString("longPress", "none");
@@ -151,6 +139,26 @@ public class PadView extends View {
         }
         invalidate();
     }
+
+    private static void readZones(JSONArray zs, List<Zone> out) throws Exception {
+        if (zs == null) return;
+        out.clear();
+        for (int i = 0; i < zs.length(); i++) {
+            JSONObject o = zs.getJSONObject(i);
+            Zone z = new Zone();
+            z.type = o.optString("type", "pad");
+            z.label = o.optString("label", "");
+            z.action = o.optString("action", "");
+            z.x = (float) o.optDouble("x", 0);
+            z.y = (float) o.optDouble("y", 0);
+            z.w = (float) o.optDouble("w", 1);
+            z.h = (float) o.optDouble("h", 1);
+            out.add(z);
+        }
+    }
+
+    /** 今の画面の領域（マウス画面 / ゲーム画面） */
+    private List<Zone> zl() { return "game".equals(mode) ? gameZones : mouseZones; }
 
     public void setState(JSONObject m) {
         tapRight = m.optBoolean("tapRight", false);
@@ -294,6 +302,7 @@ public class PadView extends View {
 
     private int zoneAt(float x, float y) {
         float fx = x / Math.max(1, getWidth()), fy = y / Math.max(1, getHeight());
+        List<Zone> zones = zl();
         for (int i = zones.size() - 1; i >= 0; i--) {
             Zone z = zones.get(i);
             if (fx >= z.x && fx < z.x + z.w && fy >= z.y && fy < z.y + z.h) return i;
@@ -302,6 +311,7 @@ public class PadView extends View {
     }
 
     private Zone zoneOf(Ptr p) {
+        List<Zone> zones = zl();
         return p.zone >= 0 && p.zone < zones.size() ? zones.get(p.zone) : null;
     }
 
@@ -397,7 +407,7 @@ public class PadView extends View {
                 twoMoved = false;
                 handler.removeCallbacks(longPressRun);
             }
-        } else if ("scroll".equals(z.type)) {
+        } else if ("scroll".equals(z.type) || "look".equals(z.type)) {
             host.vibrate(10, 160);
         } else if ("button".equals(z.type)) {
             host.vibratePattern(new long[]{0, 12, 50, 12}, 200);
@@ -444,6 +454,9 @@ public class PadView extends View {
                 if (scrollMode && !dragging) sendNum("ms", dx, dy);
                 else sendNum("mm", dx, dy);
             }
+        } else if (z != null && "look".equals(z.type)) {
+            // ゲームの視点: 指のぶれも含めてそのまま送る（タップでクリックはしない）
+            sendNum("lm", dx, dy);
         } else if (z != null && "scroll".equals(z.type)) {
             sendNum("ms", dx, dy);
             float dt = Math.max(1, now - p.lastT);
@@ -548,10 +561,11 @@ public class PadView extends View {
             }
         } else {
             text.setTextSize(15 * dens);
-            for (Zone z : zones) {
+            for (Zone z : zl()) {
                 RectF rf = new RectF(z.x * w + 3 * dens, z.y * h + 3 * dens, (z.x + z.w) * w - 3 * dens, (z.y + z.h) * h - 3 * dens);
                 int col = Color.rgb(24, 24, 30);
                 if ("scroll".equals(z.type)) col = Color.rgb(18, 30, 42);
+                if ("look".equals(z.type)) col = Color.rgb(16, 34, 24);
                 if ("button".equals(z.type)) col = Color.rgb(34, 26, 44);
                 fill.setColor(col);
                 c.drawRoundRect(rf, r, r, fill);

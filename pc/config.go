@@ -34,6 +34,7 @@ type KeyboardCfg struct {
 	RepeatIntervalMs int     `json:"repeatIntervalMs"` // リピート間隔
 	AutoCalib        bool    `json:"autoCalib"`        // タッチ位置のクセを学習して補正
 	SlipGuardMs      int     `json:"slipGuardMs"`      // 離す直前この時間内に隣のキーへずれたら元のキーにする(0=無効)
+	ScanCodes        bool    `json:"scanCodes"`        // キーをスキャンコード（物理的な位置）で送る（ゲーム向け）
 	KeyTones         bool    `json:"keyTones"`         // キーごとに音を変える（系統で音色・横位置で高さ）
 	Warn             bool    `json:"warn"`             // 日本語入力中、ローマ字として変な子音の並びで注意音
 	WarnAlpha        bool    `json:"warnAlpha"`        // 英字のまま日本語を打っていそうな時に注意音（一度だけ）
@@ -82,6 +83,12 @@ type ButtonCfg struct {
 // configSchema は設定形式の版。上げると古い既定値を新しい既定値に置き換える。
 const configSchema = 5
 
+// GameCfg はゲーム画面の設定。
+type GameCfg struct {
+	Enabled  bool    `json:"enabled"`  // 切り替えに「ゲーム画面」を含める（マウス→キーボード→ゲーム）
+	LookSens float64 `json:"lookSens"` // 視点パッドの速さ（加速なし）
+}
+
 type Config struct {
 	Schema      int         `json:"schema"`
 	Port        int         `json:"port"`
@@ -93,10 +100,12 @@ type Config struct {
 	Haptic      HapticCfg   `json:"haptic"`
 	Overlay     OverlayCfg  `json:"overlay"`
 	Buttons     ButtonCfg   `json:"buttons"`
+	Game        GameCfg     `json:"game"`
 }
 
 func DefaultConfig() *Config {
 	return &Config{
+		Game:        GameCfg{Enabled: false, LookSens: 1.5},
 		Schema:      configSchema,
 		Port:        39500,
 		PIN:         randomPIN(),
@@ -112,7 +121,7 @@ func DefaultConfig() *Config {
 			CommitOn: "release", ModMode: "sticky", Assist: true, AssistStrength: 0.8,
 			RepeatDelayMs: 450, RepeatIntervalMs: 60, ClickSound: "pc", ClickVolume: 60,
 			AutoCalib: true, SlipGuardMs: 50,
-			KeyTones: true, Warn: true, WarnAlpha: true, WarnKana: "mid", WarnVolume: 70,
+			ScanCodes: true, KeyTones: true, Warn: true, WarnAlpha: true, WarnKana: "mid", WarnVolume: 70,
 		},
 		Haptic: HapticCfg{Enabled: true, HoverMs: 6, CommitMs: 14, ToggleMs: 35, Amp: 200},
 		Overlay: OverlayCfg{
@@ -155,7 +164,7 @@ func (c *Config) Normalize() {
 		m.LongPressMs = 200
 	}
 	k := &c.Keyboard
-	if k.CommitOn != "press" {
+	if k.CommitOn != "press" && k.CommitOn != "hold" {
 		k.CommitOn = "release"
 	}
 	if k.ModMode != "hold" {
@@ -198,6 +207,9 @@ func (c *Config) Normalize() {
 	}
 	if o.MiniAnchor == "" {
 		o.MiniAnchor = "bottom-right"
+	}
+	if c.Game.LookSens <= 0 || c.Game.LookSens > 20 {
+		c.Game.LookSens = d.Game.LookSens
 	}
 	if w := c.Keyboard.WarnKana; w != "off" && w != "low" && w != "high" {
 		c.Keyboard.WarnKana = "mid"

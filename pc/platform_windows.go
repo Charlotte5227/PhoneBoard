@@ -6,6 +6,7 @@ import (
 	"log"
 	"os"
 	"strings"
+	"sync/atomic"
 	"syscall"
 	"unicode/utf16"
 	"unsafe"
@@ -52,6 +53,7 @@ const (
 	keyeventfExtended = 0x0001
 	keyeventfKeyUp    = 0x0002
 	keyeventfUnicode  = 0x0004
+	keyeventfScanCode = 0x0008
 
 	mouseMove       = 0x0001
 	mouseLeftDown   = 0x0002
@@ -116,14 +118,36 @@ func isExtended(vk uint16) bool {
 	return false
 }
 
+// useScanCodes: キーをスキャンコード（キーボード上の物理的な位置の番号）で送る。
+// 多くのゲーム（DirectInput・Raw Input）はこちらでないと反応しない。
+var useScanCodes atomic.Bool
+
+func (w *winInjector) SetScanCodes(on bool) { useScanCodes.Store(on) }
+
+// vkOnly は仮想キーのまま送るキー（音量・メディアキーなど、スキャンコードでは効かないことがあるもの）。
+func vkOnly(vk uint16) bool {
+	return vk >= 0xA6 && vk <= 0xB7
+}
+
 func keyEv(vk uint16, up bool) inputK {
-	scan, _, _ := pMapVirtualKeyW.Call(uintptr(vk), 0)
 	var f uint32
-	if isExtended(vk) {
-		f |= keyeventfExtended
-	}
 	if up {
 		f |= keyeventfKeyUp
+	}
+	if useScanCodes.Load() && !vkOnly(vk) {
+		// MAPVK_VK_TO_VSC_EX: 拡張キー（矢印・Win など）は 0xE0xx で返る
+		sc, _, _ := pMapVirtualKeyW.Call(uintptr(vk), 4)
+		if sc&0xFF != 0 {
+			f |= keyeventfScanCode
+			if sc>>8 == 0xE0 || sc>>8 == 0xE1 || isExtended(vk) {
+				f |= keyeventfExtended
+			}
+			return inputK{Type: inputKeyboardType, Ki: keybdInput{WVk: vk, WScan: uint16(sc & 0xFF), DwFlags: f}}
+		}
+	}
+	scan, _, _ := pMapVirtualKeyW.Call(uintptr(vk), 0)
+	if isExtended(vk) {
+		f |= keyeventfExtended
 	}
 	return inputK{Type: inputKeyboardType, Ki: keybdInput{WVk: vk, WScan: uint16(scan), DwFlags: f}}
 }

@@ -4,6 +4,7 @@ import (
 	"log"
 	"math"
 	"path/filepath"
+	"strings"
 	"sync"
 	"time"
 )
@@ -58,6 +59,7 @@ type App struct {
 	tapRight   bool
 	scrollMode bool
 	held       map[int]bool
+	heldKeys   map[uint16]int // 押しっぱなしのキー
 	fx, fy     float64
 	wy, wx     float64
 	webURL     string
@@ -116,6 +118,7 @@ func (a *App) ResetCalib() {
 
 // applyLocked は設定・配列の変更をキーボードとオーバーレイへ反映する。
 func (a *App) applyLocked() {
+	a.inj.SetScanCodes(a.cfg.Keyboard.ScanCodes)
 	a.kbd.Configure(a.cfg.Keyboard, &a.lay.Board)
 	a.refreshOverlayLocked()
 }
@@ -146,6 +149,9 @@ func (a *App) refreshOverlayLocked() {
 		m.History = string(hist)
 		m.IME = a.imeOn
 		m.Zones = a.lay.MouseZones
+		if a.mode == "game" {
+			m.Zones = a.lay.GameZones
+		}
 		m.TapRight = a.tapRight
 		m.ScrollMode = a.scrollMode
 		m.Connected = a.sess != nil
@@ -349,12 +355,17 @@ func (a *App) doActionLocked(s string, phase string) {
 		a.setModeLocked("mouse")
 	case "KEYBOARD":
 		a.setModeLocked("keyboard")
-	case "TOGGLE":
-		if a.mode == "mouse" {
+	case "TOGGLE": // マウス → キーボード →（ゲーム画面を使うなら）ゲーム → マウス
+		switch {
+		case a.mode == "mouse":
 			a.setModeLocked("keyboard")
-		} else {
+		case a.mode == "keyboard" && a.cfg.Game.Enabled:
+			a.setModeLocked("game")
+		default:
 			a.setModeLocked("mouse")
 		}
+	case "GAME":
+		a.setModeLocked("game")
 	case "TAPMODE":
 		a.tapRight = !a.tapRight
 		a.vib("toggle")
@@ -397,18 +408,14 @@ func (a *App) doActionLocked(s string, phase string) {
 }
 
 func (a *App) setModeLocked(m string) {
-	if m != "mouse" && m != "keyboard" {
+	if m != "mouse" && m != "keyboard" && m != "game" {
 		return
 	}
 	a.mode = m
 	a.kbd.CancelAll()
 	a.kbd.ResetContext()
 	a.releaseHeldLocked()
-	if m == "keyboard" {
-		a.toast("キーボード")
-	} else {
-		a.toast("マウス")
-	}
+	a.toast(map[string]string{"mouse": "マウス", "keyboard": "キーボード", "game": "ゲーム"}[m])
 	a.vib("toggle")
 	a.send(map[string]any{"t": "setmode", "m": m})
 	a.refreshOverlayLocked()
@@ -419,6 +426,72 @@ func (a *App) releaseHeldLocked() {
 		a.inj.MouseButton(b, false)
 	}
 	a.held = map[int]bool{}
+	for vk, n := range a.heldKeys {
+		if n > 0 {
+			a.inj.KeyUp(vk)
+		}
+	}
+	a.heldKeys = map[uint16]int{}
+}
+
+// keyHoldLocked は押しっぱなしのキーを押す/離す（同じキーを2本の指で押しても正しく数える）。
+func (a *App) keyHoldLocked(vk uint16, down bool) {
+	if a.heldKeys == nil {
+		a.heldKeys = map[uint16]int{}
+	}
+	if down {
+		a.heldKeys[vk]++
+		if a.heldKeys[vk] == 1 {
+			a.inj.KeyDown(vk)
+		}
+		return
+	}
+	if a.heldKeys[vk] > 0 {
+		a.heldKeys[vk]--
+		if a.heldKeys[vk] == 0 {
+			a.inj.KeyUp(vk)
+		}
+	}
+}
+
+// KeyHold は押しっぱなし方式（ゲーム向け）のキーボードのキー。
+func (a *App) KeyHold(ev KeyEvent, down bool) {
+	a.keyHoldLocked(ev.VK, down)
+	if down {
+		a.sound(a.keyTone(ev))
+		a.vib("commit")
+	}
+}
+
+// appActions はPhoneBoard自身の動作（キー送信ではない）アクション。
+var appActions = map[string]bool{"MOUSE": true, "KEYBOARD": true, "TOGGLE": true, "GAME": true, "TAPMODE": true,
+	"SCROLLMODE": true, "DBLCLICK": true, "SETTINGS": true, "CLEAR": true, "NONE": true}
+
+// holdButtonLocked はボタン領域のキーを押している間押しっぱなしにする（修飾キー付きなら修飾キーも）。
+func (a *App) holdButtonLocked(act string, down bool) bool {
+	if !IsAction(act) {
+		return false
+	}
+	name := actionName(act)
+	if appActions[name] || strings.HasPrefix(name, "MODE") {
+		return false
+	}
+	mods, vk, ok := ParseCombo(name)
+	if !ok {
+		return false
+	}
+	if down {
+		for _, m := range mods {
+			a.keyHoldLocked(m, true)
+		}
+		a.keyHoldLocked(vk, true)
+	} else {
+		a.keyHoldLocked(vk, false)
+		for i := len(mods) - 1; i >= 0; i-- {
+			a.keyHoldLocked(mods[i], false)
+		}
+	}
+	return true
 }
 
 func (a *App) sendStateLocked() {
@@ -451,6 +524,7 @@ func (a *App) sendCfgLocked() {
 			"miniMap": a.cfg.Overlay.MiniMap,
 		},
 		"kb":     map[string]any{"cols": b.Cols, "rows": b.Rows, "keys": keys},
+		"game":   map[string]any{"zones": a.lay.GameZones},
 		"haptic": a.cfg.Haptic.Enabled,
 	})
 	a.sendStateLocked()
@@ -538,6 +612,8 @@ func (a *App) Handle(s Sender, m *Msg) {
 		a.refreshOverlayLocked()
 	case "mm":
 		a.mouseMoveLocked(m.Dx, m.Dy)
+	case "lm":
+		a.lookMoveLocked(m.Dx, m.Dy)
 	case "ms":
 		a.scrollLocked(m.Dx, m.Dy)
 	case "tap":
@@ -582,6 +658,11 @@ func (a *App) Handle(s Sender, m *Msg) {
 			}
 			if _, ok := isClickAction(name); ok {
 				a.doActionLocked(m.A, m.S)
+			} else if a.holdButtonLocked(m.A, m.S == "down") {
+				// キーは押している間押しっぱなし（ゲームの移動キーなど）
+				if m.S == "down" {
+					a.sound(SndFunc, 6)
+				}
 			} else if m.S == "up" {
 				a.doActionLocked(m.A, "tap")
 			}
@@ -636,6 +717,8 @@ func (a *App) HandleUDP(m *Msg) {
 	switch m.T {
 	case "mm":
 		a.mouseMoveLocked(m.Dx, m.Dy)
+	case "lm":
+		a.lookMoveLocked(m.Dx, m.Dy)
 	case "ms":
 		a.scrollLocked(m.Dx, m.Dy)
 	case "mt":
@@ -645,6 +728,19 @@ func (a *App) HandleUDP(m *Msg) {
 			o.MiniZone = m.Z
 			o.MiniAt = time.Now()
 		})
+	}
+}
+
+// lookMoveLocked はゲーム画面の視点パッド（加速なし・一定の速さ）。
+func (a *App) lookMoveLocked(dx, dy float64) {
+	g := a.cfg.Game.LookSens
+	a.fx += dx * g
+	a.fy += dy * g
+	ix, iy := int(a.fx), int(a.fy)
+	a.fx -= float64(ix)
+	a.fy -= float64(iy)
+	if ix != 0 || iy != 0 {
+		a.inj.MouseMove(ix, iy)
 	}
 }
 

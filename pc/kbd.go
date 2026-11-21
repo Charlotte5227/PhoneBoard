@@ -29,10 +29,11 @@ type KeyEvent struct {
 
 // KbdOut はキーボードエンジンからアプリへの出力。
 type KbdOut interface {
-	KeyPress(ev KeyEvent)        // キー入力（修飾キー付き）
-	ModKey(vk uint16, down bool) // 同時押し方式: 修飾キーの押下/解放
-	Action(a string)             // {MOUSE} など
-	Feedback(kind string)        // hover / commit / mod / cancel（振動・音）
+	KeyPress(ev KeyEvent)
+	KeyHold(ev KeyEvent, down bool) // 押しっぱなし方式（ゲーム向け）のキーを押す/離す        // キー入力（修飾キー付き）
+	ModKey(vk uint16, down bool)    // 同時押し方式: 修飾キーの押下/解放
+	Action(a string)                // {MOUSE} など
+	Feedback(kind string)           // hover / commit / mod / cancel（振動・音）
 }
 
 type finger struct {
@@ -50,6 +51,7 @@ type finger struct {
 	prevDur int64   // ひとつ前のキーに乗っていた時間
 	chX     float64 // キーが変わる直前の位置
 	chY     float64
+	hold    *KeyEvent // 押しっぱなし方式で押しているキー
 }
 
 // Calib はタッチ位置のクセ（左手側[0]・右手側[1]、キー1個=1の単位）。
@@ -93,15 +95,69 @@ func NewKbd(out KbdOut) *Kbd {
 }
 
 func (k *Kbd) Configure(cfg KeyboardCfg, b *Board) {
+	if cfg.CommitOn == "hold" {
+		// ゲーム向け: 文字入力のための補正や注意はすべてオフ
+		cfg.Assist, cfg.AutoCalib, cfg.SlipGuardMs = false, false, 0
+		cfg.Warn, cfg.WarnAlpha, cfg.WarnKana = false, false, "off"
+	}
 	k.CancelAll()
 	k.cfg = cfg
 	k.board = b
-	if cfg.ModMode == "hold" {
+	if cfg.ModMode == "hold" || cfg.CommitOn == "hold" {
 		k.state = map[string]modState{}
 	}
 }
 
-func (k *Kbd) sticky() bool { return k.cfg.ModMode != "hold" }
+func (k *Kbd) sticky() bool { return k.cfg.ModMode != "hold" && !k.holdMode() }
+
+// holdMode は「触れている間キーを押しっぱなし」方式（ゲーム向け）。
+func (k *Kbd) holdMode() bool { return k.cfg.CommitOn == "hold" }
+
+// holdEvent は押しっぱなし方式で押すキー（修飾キーはOS側で既に押されているので付けない）。
+func (k *Kbd) holdEvent(i int) *KeyEvent {
+	key := &k.board.Keys[i]
+	fn := k.fnActive() && key.FnKey != ""
+	if key.Mod != "" && !fn {
+		return nil
+	}
+	name, label := key.Key, key.Label
+	if fn {
+		name = key.FnKey
+		if key.FnLabel != "" {
+			label = key.FnLabel
+		}
+	}
+	_, vk, ok := ParseCombo(name)
+	if !ok || key.Action != "" && !fn {
+		return nil
+	}
+	if k.held["fn"] > 0 {
+		k.used["fn"] = true
+	}
+	return &KeyEvent{VK: vk, Name: name, Label: label, Index: i, Fn: fn}
+}
+
+func (k *Kbd) holdPress(f *finger, i int) {
+	if i < 0 {
+		return
+	}
+	if ev := k.holdEvent(i); ev != nil {
+		f.hold = ev
+		k.out.KeyHold(*ev, true)
+		k.flash[i] = 1
+	} else if key := &k.board.Keys[i]; key.Action != "" {
+		k.out.Action(key.Action) // 「マウス」キーなど
+		k.flash[i] = 1
+		f.done = true
+	}
+}
+
+func (k *Kbd) holdRelease(f *finger) {
+	if f.hold != nil {
+		k.out.KeyHold(*f.hold, false)
+		f.hold = nil
+	}
+}
 
 // modActive はその修飾キーが今効いているか。
 func (k *Kbd) modActive(m string) bool {
@@ -207,6 +263,10 @@ func (k *Kbd) Down(id int, x, y float64, t int64) {
 		k.out.Feedback("mod")
 		return
 	}
+	if k.holdMode() {
+		k.holdPress(f, f.key)
+		return
+	}
 	k.out.Feedback("hover")
 	if k.cfg.CommitOn == "press" {
 		k.commit(f.key)
@@ -222,6 +282,17 @@ func (k *Kbd) Move(id int, x, y float64, t int64) {
 	px, py := f.x, f.y
 	f.x, f.y = x, y
 	if f.mod != "" || f.done {
+		return
+	}
+	if k.holdMode() {
+		// 滑らせて別のキーに乗ったら、押すキーも切り替える（W → D など）
+		if h := k.Hit(x, y); h != f.key {
+			f.key = h
+			k.holdRelease(f)
+			if h >= 0 && k.board.Keys[h].Mod == "" {
+				k.holdPress(f, h)
+			}
+		}
 		return
 	}
 	if h := k.Hit(x, y); h != f.key {
@@ -242,6 +313,10 @@ func (k *Kbd) Up(id int, x, y float64, t int64) {
 		return
 	}
 	k.Move(id, x, y, t)
+	if k.holdMode() {
+		k.release(f, false)
+		return
+	}
 	// 離す瞬間の指の転がりで隣のキーに乗った場合は、直前まで乗っていたキーにする
 	// （キーの外へ逃がした＝取り消し、や大きく動かした時は除く）
 	if g := int64(k.cfg.SlipGuardMs); g > 0 && f.mod == "" && !f.done && f.prevKey >= 0 && f.key >= 0 &&
@@ -254,6 +329,7 @@ func (k *Kbd) Up(id int, x, y float64, t int64) {
 
 func (k *Kbd) release(f *finger, commit bool) {
 	delete(k.fingers, f.id)
+	k.holdRelease(f)
 	if f.mod != "" {
 		k.held[f.mod]--
 		if k.held[f.mod] <= 0 {
@@ -485,6 +561,9 @@ func (k *Kbd) ResetContext() { k.ctx = k.ctx[:0] }
 func (k *Kbd) Tick(t int64) {
 	if k.board == nil {
 		return
+	}
+	if k.holdMode() {
+		return // 押しっぱなし方式ではリピートしない（押している間ずっと押されている）
 	}
 	for _, f := range k.fingers {
 		// なぞって探してきたキーではリピートしない（探している途中で消してしまわないように）

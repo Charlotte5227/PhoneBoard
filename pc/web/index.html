@@ -109,6 +109,12 @@ code{background:var(--panel2);padding:1px 5px;border-radius:4px}
 </section>
 
 <section data-tab="マウス"><div class="grid" id="f-mouse"></div></section>
+<section data-tab="ゲーム">
+  <div class="grid" id="f-game"></div>
+  <p class="sub"><b>ゲーム画面</b>はスマホの左側に WASD などのキー、右側に視点を動かすパッドとクリックボタンが並ぶ画面です。キーもクリックも<b>押している間ずっと押しっぱなし</b>になり、複数同時に押せます。配置は「マウス・ゲーム画面」タブで「ゲーム画面」を選ぶと変えられます。ボタンのアクションに <code>{W}</code> や <code>{LSHIFT}</code> のようにキーを書くと、そのキーを押しっぱなしにします。</p>
+  <p class="sub">普通のキーボード画面をゲームで使う時は「キーボード」タブの「キーを入力するタイミング」を「押している間押しっぱなし」にしてください。</p>
+  <p class="sub"><b>反応しない時</b>: 管理者として動いているゲームには、PCソフトも右クリック→「管理者として実行」で起動しないと入力が届きません。また、チート対策（アンチチート）が仮想入力を拒否するゲームでは使えません。</p>
+</section>
 <section data-tab="振動"><div class="grid" id="f-haptic"></div></section>
 
 <section data-tab="PC表示">
@@ -173,13 +179,14 @@ code{background:var(--panel2);padding:1px 5px;border-radius:4px}
   <div id="warn" style="color:var(--bad)"></div>
 </section>
 
-<section data-tab="マウス画面">
+<section data-tab="マウス・ゲーム画面">
+  <div class="toolbar"><label>編集する画面 <select id="zSet"><option value="mouseZones">マウス画面</option><option value="gameZones">ゲーム画面</option></select></label></div>
   <div style="display:flex;gap:22px;flex-wrap:wrap;align-items:flex-start">
     <div><canvas id="mcv" width="640" height="300"></canvas><div class="sub">領域をクリックで選択</div></div>
     <div style="flex:1;min-width:340px">
-      <p class="sub"><b>パッド</b>=カーソル移動（タップでクリック、2本指でスクロール）、<b>スクロール</b>=なぞってスクロール、<b>ボタン</b>=触れて離すとアクション（クリック系は押している間押しっぱなし）。画面の端は見なくても指で探せるので、端に配置するのがおすすめです。</p>
+      <p class="sub"><b>パッド</b>=カーソル移動（タップでクリック、2本指でスクロール）、<b>スクロール</b>=なぞってスクロール、<b>ボタン</b>=触れて離すとアクション（クリック系・キー1つは押している間押しっぱなし）、<b>視点</b>=ゲームの視点操作（なぞった分だけマウスを動かす。タップしてもクリックしない）。画面の端は見なくても指で探せるので、端に配置するのがおすすめです。</p>
       <div class="form2">
-        <label>種類<select id="zType"><option value="pad">パッド</option><option value="scroll">スクロール</option><option value="button">ボタン</option></select></label>
+        <label>種類<select id="zType"><option value="pad">パッド</option><option value="scroll">スクロール</option><option value="button">ボタン</option><option value="look">視点</option></select></label>
         <label>表示<input id="zLabel"></label>
         <label>アクション<input id="zAction" list="acts"></label>
         <label>左%<input id="zX" type="number"></label><label>上%<input id="zY" type="number"></label>
@@ -210,11 +217,12 @@ code{background:var(--panel2);padding:1px 5px;border-radius:4px}
 <script>
 const KEYS=[["ESC","Esc"],["TAB","Tab"],["ENTER","Enter"],["BS","BackSpace"],["DEL","Delete"],["SPACE","スペース"],
 ["LEFT","←"],["RIGHT","→"],["UP","↑"],["DOWN","↓"],["HOME","Home"],["END","End"],["PGUP","PageUp"],["PGDN","PageDown"],
-["KANJI","半角/全角"],["CONVERT","変換"],["NONCONVERT","無変換"],["KANA","カタカナ/ひらがな"],["EISU","英数"],["CAPSLOCK","CapsLock"],
+["LSHIFT","左Shift"],["LCTRL","左Ctrl"],["LALT","左Alt"],["KANJI","半角/全角"],["CONVERT","変換"],["NONCONVERT","無変換"],["KANA","カタカナ/ひらがな"],["EISU","英数"],["CAPSLOCK","CapsLock"],
 ["MINUS","- ="],["CARET","^ ~"],["YEN","¥ |"],["AT","@ `"],["LBRACKET","[ {"],["RBRACKET","] }"],["SEMICOLON","; +"],["COLON",": *"],
 ["COMMA",", <"],["PERIOD",". >"],["SLASH","/ ?"],["BACKSLASH","\\ _（ろ）"],["APPS","アプリケーション(メニュー)"],["PRINTSCREEN","PrintScreen"],["INSERT","Insert"],
 ["VOLUP","音量＋"],["VOLDOWN","音量－"],["MUTE","ミュート"],["PLAYPAUSE","再生/一時停止"],["NEXT","次の曲"],["PREV","前の曲"]];
-const ACTIONS=[["{MOUSE}","マウスへ"],["{KEYBOARD}","キーボードへ"],["{TOGGLE}","マウス/キーボード切替"],
+const ACTIONS=[["{MOUSE}","マウスへ"],["{KEYBOARD}","キーボードへ"],["{GAME}","ゲーム画面へ"],["{TOGGLE}","マウス/キーボード（/ゲーム）切替"],
+["{W}","Wキー（ボタンでは押している間押しっぱなし。他のキー名も同様）"],["{LSHIFT}","左Shift（押しっぱなし。LCTRL・LALTも可）"],
 ["{CLICK_L}","左クリック（ボタン・音量キーでは押している間押しっぱなし）"],["{CLICK_R}","右クリック"],["{CLICK_M}","中クリック"],["{DBLCLICK}","ダブルクリック"],
 ["{TAPMODE}","パッドのタップを 左⇔右クリック 切替"],["{SCROLLMODE}","パッドを スクロール⇔カーソル 切替"],
 ["{KANJI}","半角/全角"],["{CTRL+C}","コピー"],["{CTRL+V}","貼り付け"],["{CTRL+Z}","元に戻す"],["{ALT+TAB}","ウィンドウ切替"],["{WIN+D}","デスクトップ表示"],
@@ -222,7 +230,7 @@ const ACTIONS=[["{MOUSE}","マウスへ"],["{KEYBOARD}","キーボードへ"],["
 
 const SCHEMA={
  general:[["requirePin","接続にPINを必須にする","bool"],["openOnStart","起動時にこの設定画面を開く","bool"],["port","ポート番号（変更後はPCソフトを再起動）","int"]],
- keyboard:[["commitOn","キーを入力するタイミング","select",{release:"離した時（置いたまま滑らせて直せる）",press:"触れた瞬間（普通のタッチキーボード）"}],
+ keyboard:[["scanCodes","スキャンコードで送る（ゲームで反応しない時用・通常はオン）","bool"],["commitOn","キーを入力するタイミング","select",{release:"離した時（置いたまま滑らせて直せる）",press:"触れた瞬間（普通のタッチキーボード）",hold:"押している間押しっぱなし（ゲーム向け・補助/注意音は無効）"}],
   ["modMode","Shift・Ctrl・Alt・Win・Fn","select",{sticky:"ワンショット（1回押すと次のキーに効く・2回で固定）",hold:"同時押し（押している間だけ効く）"}],
   ["assist","入力補助（次に来そうな文字のキーを押しやすく）","bool"],["assistStrength","入力補助の強さ","range",0.1,2,0.05],
   ["autoCalib","タッチ位置の自動補正（押す位置のクセを学習）","bool"],["slipGuardMs","離す瞬間のズレを無視する時間(ms, 0=無効)","range",0,120,5],
@@ -245,6 +253,7 @@ const SCHEMA={
   ["opacity","キーボード表示の不透明度(%)","range",20,100,1],["showHints","キーにShift/Fnの文字も小さく表示","bool"],["showHistory","入力履歴・IMEの状態を表示","bool"],
   ["miniMap","マウス操作中、触れている位置を小窓で表示","bool"],["miniWidth","小窓の幅(px)","range",120,600,5],
   ["miniAnchor","小窓の位置","select",{"bottom-right":"右下","bottom-left":"左下","top-right":"右上","top-left":"左上"}],["toast","モード切替などを画面中央に表示","bool"]],
+ game:[["enabled","切り替えボタン・{TOGGLE}でゲーム画面も順番に出す（マウス→キーボード→ゲーム）","bool"],["lookSens","視点パッドの速さ","range",0.2,8,0.1]],
  buttons:[["mouseVolUp","マウス中: 音量↑","text"],["mouseVolDown","マウス中: 音量↓","text"],["kbVolUp","キーボード中: 音量↑","text"],["kbVolDown","キーボード中: 音量↓","text"]]
 };
 
@@ -357,26 +366,28 @@ function exportLayouts(){const a=document.createElement('a');a.href=URL.createOb
 function importLayouts(inp){const f=inp.files[0];if(!f)return;f.text().then(t=>{const l=JSON.parse(t);if(!l.board)throw new Error('キー配置のファイルではありません');lay=l;sel=-1;renderBoard();drawM();flash('読み込みました（保存で反映）')}).catch(e=>alert(e))}
 
 // ===== マウス画面エディタ =====
-let zsel=-1;const ZCOL={pad:'#30313c',scroll:'#1e3246',button:'#372d46'};
+let zsel=-1;const ZCOL={pad:'#30313c',scroll:'#1e3246',button:'#372d46',look:'#1e3a2a'};
+function zs(){return lay[$('zSet').value]||(lay[$('zSet').value]=[])}
+$('zSet').onchange=()=>{zsel=-1;fillZoneForm();drawM()};
 function drawM(){if(!lay)return;const c=mcv.getContext('2d'),W=mcv.width,H=mcv.height;c.fillStyle='#0b0b0e';c.fillRect(0,0,W,H);
-  lay.mouseZones.forEach((z,i)=>{const x=z.x*W+2,y=z.y*H+2,w=z.w*W-4,h=z.h*H-4;c.fillStyle=i==zsel?'#3b5bb5':ZCOL[z.type]||'#333';c.beginPath();c.roundRect(x,y,w,h,8);c.fill();
+  zs().forEach((z,i)=>{const x=z.x*W+2,y=z.y*H+2,w=z.w*W-4,h=z.h*H-4;c.fillStyle=i==zsel?'#3b5bb5':ZCOL[z.type]||'#333';c.beginPath();c.roundRect(x,y,w,h,8);c.fill();
     c.fillStyle='#ddd';c.textAlign='center';c.textBaseline='middle';c.font='bold 14px sans-serif';c.fillText(z.label,x+w/2,y+h/2-8,w-6);
-    c.fillStyle='#999';c.font='11px sans-serif';c.fillText(z.type=='button'?z.action:({pad:'パッド',scroll:'スクロール'})[z.type],x+w/2,y+h/2+10,w-6)})}
+    c.fillStyle='#999';c.font='11px sans-serif';c.fillText(z.type=='button'?z.action:({pad:'パッド',scroll:'スクロール',look:'視点'})[z.type],x+w/2,y+h/2+10,w-6)})}
 mcv.onpointerdown=ev=>{const r=mcv.getBoundingClientRect();const x=(ev.clientX-r.left)/r.width,y=(ev.clientY-r.top)/r.height;zsel=-1;
-  for(let i=lay.mouseZones.length-1;i>=0;i--){const z=lay.mouseZones[i];if(x>=z.x&&x<z.x+z.w&&y>=z.y&&y<z.y+z.h){zsel=i;break}}fillZoneForm();drawM()};
+  for(let i=zs().length-1;i>=0;i--){const z=zs()[i];if(x>=z.x&&x<z.x+z.w&&y>=z.y&&y<z.y+z.h){zsel=i;break}}fillZoneForm();drawM()};
 const ZF=['zType','zLabel','zAction','zX','zY','zW','zH'];
-function fillZoneForm(){const z=lay&&lay.mouseZones[zsel];ZF.forEach(id=>$(id).disabled=!z);if(!z)return;$('zType').value=z.type;$('zLabel').value=z.label;$('zAction').value=z.action||'';
+function fillZoneForm(){const z=lay&&zs()[zsel];ZF.forEach(id=>$(id).disabled=!z);if(!z)return;$('zType').value=z.type;$('zLabel').value=z.label;$('zAction').value=z.action||'';
   $('zX').value=Math.round(z.x*100);$('zY').value=Math.round(z.y*100);$('zW').value=Math.round(z.w*100);$('zH').value=Math.round(z.h*100)}
-ZF.forEach(id=>$(id).addEventListener('input',()=>{const z=lay.mouseZones[zsel];if(!z)return;z.type=$('zType').value;z.label=$('zLabel').value;z.action=$('zAction').value;
+ZF.forEach(id=>$(id).addEventListener('input',()=>{const z=zs()[zsel];if(!z)return;z.type=$('zType').value;z.label=$('zLabel').value;z.action=$('zAction').value;
   z.x=(+$('zX').value||0)/100;z.y=(+$('zY').value||0)/100;z.w=(+$('zW').value||1)/100;z.h=(+$('zH').value||1)/100;drawM()}));
-function addZone(){lay.mouseZones.push({type:'button',label:'ボタン',action:'{CLICK_M}',x:.4,y:.4,w:.2,h:.2});zsel=lay.mouseZones.length-1;fillZoneForm();drawM()}
-function delZone(){if(zsel<0)return;lay.mouseZones.splice(zsel,1);zsel=-1;fillZoneForm();drawM()}
-function mirrorZones(){for(const z of lay.mouseZones)z.x=Math.max(0,1-z.x-z.w);drawM();fillZoneForm()}
-async function defaultZones(){const d=await api('/api/layouts/default');lay.mouseZones=d.mouseZones;zsel=-1;fillZoneForm();drawM()}
+function addZone(){zs().push({type:'button',label:'ボタン',action:'{CLICK_M}',x:.4,y:.4,w:.2,h:.2});zsel=zs().length-1;fillZoneForm();drawM()}
+function delZone(){if(zsel<0)return;zs().splice(zsel,1);zsel=-1;fillZoneForm();drawM()}
+function mirrorZones(){for(const z of zs())z.x=Math.max(0,1-z.x-z.w);drawM();fillZoneForm()}
+async function defaultZones(){const d=await api('/api/layouts/default');lay[$('zSet').value]=d[$('zSet').value];zsel=-1;fillZoneForm();drawM()}
 
 (async()=>{
   cfg=await api('/api/config');lay=await api('/api/layouts');status=await api('/api/status');
-  buildForm('general');buildForm('keyboard','keyboard');buildForm('mouse','mouse');buildForm('haptic','haptic');buildForm('overlay','overlay');buildForm('buttons','buttons');
+  buildForm('general');buildForm('keyboard','keyboard');buildForm('mouse','mouse');buildForm('haptic','haptic');buildForm('game','game');buildForm('overlay','overlay');buildForm('buttons','buttons');
   renderStatus();renderBoard();fillZoneForm();show(+(localStorage.pbTab2||0));setInterval(poll,1000);
 })();
 </script>

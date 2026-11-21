@@ -55,6 +55,7 @@ type Layouts struct {
 	Schema     int         `json:"schema"`
 	Board      Board       `json:"board"`
 	MouseZones []MouseZone `json:"mouseZones"`
+	GameZones  []MouseZone `json:"gameZones"` // ゲーム画面（ボタン＝キーやクリックを押しっぱなし、look＝視点操作）
 }
 
 func (ls *Layouts) Clone() *Layouts {
@@ -90,14 +91,19 @@ func (ls *Layouts) Normalize() {
 		k.Key = strings.ToUpper(k.Key)
 		k.FnKey = strings.ToUpper(k.FnKey)
 	}
-	for i := range ls.MouseZones {
-		z := &ls.MouseZones[i]
-		z.X = clamp(z.X, 0, 1)
-		z.Y = clamp(z.Y, 0, 1)
-		z.W = clamp(z.W, 0.01, 1)
-		z.H = clamp(z.H, 0.01, 1)
-		if z.Type != "pad" && z.Type != "scroll" && z.Type != "button" {
-			z.Type = "pad"
+	if len(ls.GameZones) == 0 {
+		ls.GameZones = DefaultLayouts().GameZones
+	}
+	for _, zs := range [][]MouseZone{ls.MouseZones, ls.GameZones} {
+		for i := range zs {
+			z := &zs[i]
+			z.X = clamp(z.X, 0, 1)
+			z.Y = clamp(z.Y, 0, 1)
+			z.W = clamp(z.W, 0.01, 1)
+			z.H = clamp(z.H, 0.01, 1)
+			if z.Type != "pad" && z.Type != "scroll" && z.Type != "button" && z.Type != "look" {
+				z.Type = "pad"
+			}
 		}
 	}
 }
@@ -179,7 +185,34 @@ func DefaultLayouts() *Layouts {
 			{Type: "pad", Label: "パッド", X: 0.16, Y: 0, W: 0.72, H: 1},
 			{Type: "scroll", Label: "スクロール", X: 0.88, Y: 0, W: 0.12, H: 1},
 		},
+		GameZones: defaultGameZones(),
 	}
+}
+
+// defaultGameZones はゲーム画面の既定配置。左手でキー（WASD）、右手で視点、右端に射撃・構え。
+func defaultGameZones() []MouseZone {
+	z := []MouseZone{
+		{Type: "button", Label: "マウス", Action: "{MOUSE}", X: 0, Y: 0, W: 0.1, H: 0.16},
+		{Type: "button", Label: "Esc", Action: "{ESC}", X: 0.1, Y: 0, W: 0.1, H: 0.16},
+		{Type: "look", Label: "視点", X: 0.44, Y: 0, W: 0.42, H: 0.8},
+		{Type: "button", Label: "左クリック", Action: "{CLICK_L}", X: 0.86, Y: 0, W: 0.14, H: 0.45},
+		{Type: "button", Label: "右クリック", Action: "{CLICK_R}", X: 0.86, Y: 0.45, W: 0.14, H: 0.35},
+		{Type: "button", Label: "Space", Action: "{SPACE}", X: 0.44, Y: 0.8, W: 0.28, H: 0.2},
+		{Type: "scroll", Label: "ホイール", X: 0.72, Y: 0.8, W: 0.28, H: 0.2},
+	}
+	rows := [][]string{{"TAB", "Q", "W", "E", "R"}, {"LSHIFT", "A", "S", "D", "F"}, {"LCTRL", "Z", "X", "C", "V"}, {"1", "2", "3", "G", "T"}}
+	labels := map[string]string{"TAB": "Tab", "LSHIFT": "Shift", "LCTRL": "Ctrl"}
+	for r, row := range rows {
+		for c, k := range row {
+			l := labels[k]
+			if l == "" {
+				l = k
+			}
+			z = append(z, MouseZone{Type: "button", Label: l, Action: "{" + k + "}",
+				X: 0.02 + float64(c)*0.084, Y: 0.16 + float64(r)*0.21, W: 0.084, H: 0.21})
+		}
+	}
+	return z
 }
 
 func itoa(i int) string {

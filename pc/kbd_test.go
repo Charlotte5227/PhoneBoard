@@ -15,6 +15,14 @@ type kout struct {
 	warns []string
 }
 
+func (o *kout) KeyHold(ev KeyEvent, down bool) {
+	if down {
+		o.log = append(o.log, "+"+ev.Label)
+	} else {
+		o.log = append(o.log, "-"+ev.Label)
+	}
+}
+
 func (o *kout) KeyPress(ev KeyEvent) {
 	s := ""
 	for _, m := range ev.Mods {
@@ -501,5 +509,39 @@ func TestCompositionBackspace(t *testing.T) {
 	r.typeWord("katk")
 	if strings.Join(r.o.warns, ",") != "k:romaji" {
 		t.Fatalf("warns %v", r.o.warns)
+	}
+}
+
+// 押しっぱなし方式（ゲーム向け）: 触れたら押す・離したら離す・滑らせたら切り替え・同時押し
+func TestCommitHold(t *testing.T) {
+	r := newKrig(func(c *KeyboardCfg) { c.CommitOn = "hold" })
+	wx, wy := r.at("W", 0, 0)
+	dx, dy := r.at("D", 0, 0)
+	sx, sy := r.at("Space", 0, 0)
+	r.k.Down(1, wx, wy, 1000) // W を押す
+	r.k.Down(2, sx, sy, 1050) // 同時に Space
+	r.k.Tick(3000)            // 押している間はリピートしない
+	r.k.Up(2, sx, sy, 1100)
+	r.k.Move(1, dx, dy, 1200) // W から D へ滑らせる
+	r.k.Up(1, dx, dy, 1300)
+	if g := strings.Join(r.o.log, ","); g != "+W,+Space,-Space,-W,+D,-D" {
+		t.Fatal(g)
+	}
+	// Shift は押さえている間だけ（OS側で押しっぱなし）
+	r.o.log = nil
+	shx, shy := r.at("Shift", 0, 0)
+	r.k.Down(3, shx, shy, 2000)
+	r.k.Down(4, wx, wy, 2050)
+	r.k.Up(4, wx, wy, 2100)
+	r.k.Up(3, shx, shy, 2150)
+	if g := strings.Join(r.o.log, ","); g != "mod0xa0:true,+W,-W,mod0xa0:false" {
+		t.Fatal(g)
+	}
+	// モード切替・切断などで全部離す
+	r.o.log = nil
+	r.k.Down(5, wx, wy, 3000)
+	r.k.CancelAll()
+	if g := strings.Join(r.o.log, ","); g != "+W,-W" {
+		t.Fatal(g)
 	}
 }
