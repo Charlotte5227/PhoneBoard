@@ -2,6 +2,8 @@ package main
 
 import (
 	"bufio"
+	"crypto/rand"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"log"
@@ -12,7 +14,7 @@ import (
 	"time"
 )
 
-const Version = "2.0.0"
+const Version = "2.1.0"
 
 // Session は1台のスマホとのTCP接続。改行区切りJSONでやり取りする。
 type Session struct {
@@ -109,8 +111,10 @@ func handleConn(app *App, c net.Conn) {
 	}
 	host, _ := os.Hostname()
 	s.name = hello.Name
-	s.Send(map[string]any{"t": "welcome", "host": host, "v": Version})
-	app.OnConnect(s, PhoneInfo{Name: hello.Name, Wdp: hello.Wdp, Hdp: hello.Hdp})
+	tok := randomToken()
+	// udp: カーソル移動などをUDPで送ってよいポートと、その合言葉
+	s.Send(map[string]any{"t": "welcome", "host": host, "v": Version, "udp": cfg.Port, "tok": tok})
+	app.OnConnect(s, PhoneInfo{Name: hello.Name, Wdp: hello.Wdp, Hdp: hello.Hdp}, tok)
 	defer app.OnDisconnect(s)
 
 	for {
@@ -126,25 +130,42 @@ func handleConn(app *App, c net.Conn) {
 	}
 }
 
-// RunDiscovery はスマホからの「PHONEBOARD?」ブロードキャストに応答する。
-func RunDiscovery(port int) {
+// RunUDP はスマホからの「PHONEBOARD?」(PCの自動検出)に応答し、
+// UDPで届くマウスの動き（JSON、合言葉つき）を処理する。
+func RunUDP(app *App, port int) {
 	pc, err := net.ListenPacket("udp4", fmt.Sprintf(":%d", port))
 	if err != nil {
 		log.Printf("UDP listen error: %v", err)
 		return
 	}
 	host, _ := os.Hostname()
-	buf := make([]byte, 512)
+	buf := make([]byte, 2048)
 	for {
 		n, addr, err := pc.ReadFrom(buf)
 		if err != nil {
 			continue
 		}
-		if strings.HasPrefix(string(buf[:n]), "PHONEBOARD?") {
+		b := buf[:n]
+		if len(b) > 0 && b[0] == '{' {
+			var m Msg
+			if json.Unmarshal(b, &m) == nil {
+				app.HandleUDP(&m)
+			}
+			continue
+		}
+		if strings.HasPrefix(string(b), "PHONEBOARD?") {
 			reply := fmt.Sprintf("PHONEBOARD!|%d|%s|%s", port, host, Version)
 			_, _ = pc.WriteTo([]byte(reply), addr)
 		}
 	}
+}
+
+func randomToken() string {
+	b := make([]byte, 12)
+	if _, err := rand.Read(b); err != nil {
+		return fmt.Sprintf("%d", time.Now().UnixNano())
+	}
+	return hex.EncodeToString(b)
 }
 
 func localIPs() []string {

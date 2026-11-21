@@ -99,6 +99,14 @@ func RunWeb(app *App, port int, ready chan<- string) {
 		app.Preview()
 		writeJSON(w, map[string]bool{"ok": true})
 	})
+	mux.HandleFunc("/api/calib/reset", func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost {
+			http.Error(w, "POST only", 405)
+			return
+		}
+		app.ResetCalib()
+		writeJSON(w, app.Status())
+	})
 	mux.HandleFunc("/api/testclick", func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodPost {
 			http.Error(w, "POST only", 405)

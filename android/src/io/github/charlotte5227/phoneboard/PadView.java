@@ -28,6 +28,7 @@ public class PadView extends View {
 
     public interface Host {
         void send(JSONObject o);
+        void sendFast(JSONObject o); // 取りこぼしても良いもの（UDP）
         void vibrate(long ms, int amp);
         void vibratePattern(long[] pattern, int amp);
         void openSetup();
@@ -205,7 +206,7 @@ public class PadView extends View {
             o.put("t", t);
             o.put("dx", dx);
             o.put("dy", dy);
-            host.send(o);
+            host.sendFast(o);
         } catch (Exception ignored) {
         }
     }
@@ -220,7 +221,9 @@ public class PadView extends View {
             o.put("y", y / Math.max(1, getHeight()));
             if (z >= -1) o.put("z", z);
             o.put("ts", SystemClock.uptimeMillis());
-            host.send(o);
+            // 小窓用の位置(mt)の動きはUDP、キーボードのタッチ(kt)は確実に届くTCP
+            if ("mt".equals(t) && "m".equals(a)) host.sendFast(o);
+            else host.send(o);
         } catch (Exception ignored) {
         }
     }

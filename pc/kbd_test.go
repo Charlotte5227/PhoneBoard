@@ -3,6 +3,7 @@ package main
 import (
 	"encoding/json"
 	"fmt"
+	"math"
 	"os"
 	"path/filepath"
 	"strings"
@@ -292,5 +293,48 @@ func TestConfigMigration(t *testing.T) {
 	}
 	if _, err := os.Stat(filepath.Join(dataDir(), "layouts.old.json")); err != nil {
 		t.Fatal("old layout not backed up")
+	}
+}
+
+func TestSlipGuard(t *testing.T) {
+	r := newKrig(func(c *KeyboardCfg) { c.Assist = false; c.AutoCalib = false })
+	// G を押して、離す直前(20ms)に指が転がって H に乗った → G
+	x0, y0 := r.at("G", 0.3, 0)
+	x1, y1 := r.at("H", -0.4, 0)
+	r.k.Down(1, x0, y0, 1000)
+	r.k.Move(1, x1, y1, 1100)
+	r.k.Up(1, x1, y1, 1120)
+	// 滑らせて H に移り、少し置いてから離した → H
+	r.k.Down(1, x0, y0, 2000)
+	r.k.Move(1, x1, y1, 2100)
+	r.k.Up(1, x1, y1, 2200)
+	if g := r.got(); g != "g,h" {
+		t.Fatal(g)
+	}
+}
+
+func TestAutoCalib(t *testing.T) {
+	r := newKrig(func(c *KeyboardCfg) { c.Assist = false })
+	// 右手側でいつもキーの中心より 0.4 下を押すクセ
+	for i := 0; i < 60; i++ {
+		r.tap(1, "U", 0, 0.4)
+		r.tap(1, "I", 0, 0.4)
+	}
+	r.got()
+	if r.k.Calib.Y[1] < 0.2 || math.Abs(r.k.Calib.Y[0]) > 0.01 {
+		t.Fatalf("calib %+v", r.k.Calib)
+	}
+	// 補正後: U の中心から 0.55 下（本来は J の領域）を押しても U
+	r.tap(1, "U", 0, 0.55)
+	if g := r.got(); g != "u" {
+		t.Fatal(g)
+	}
+	// BS で消したキーは学習しない
+	before := r.k.Calib
+	r.tap(1, "O", 0.45, -0.45)
+	r.tap(1, "BS", 0, 0)
+	r.tap(1, "O", 0, 0)
+	if r.k.Calib.X[1] != before.X[1] && math.Abs(r.k.Calib.X[1]-before.X[1]) > 0.001 {
+		t.Fatalf("learned from typo: %+v -> %+v", before, r.k.Calib)
 	}
 }

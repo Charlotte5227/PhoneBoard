@@ -3,6 +3,7 @@ package main
 import (
 	"log"
 	"math"
+	"path/filepath"
 	"sync"
 	"time"
 )
@@ -41,6 +42,7 @@ type Msg struct {
 	Pin  string  `json:"pin"`
 	V    int     `json:"v"`
 	Ts   int64   `json:"ts"`
+	Tok  string  `json:"tok"` // UDPで届くメッセージの合言葉
 }
 
 // Clicker はPCでクリック音を鳴らす（Windows: sound_windows.go）。
@@ -70,6 +72,9 @@ type App struct {
 	imeAt      time.Time
 	clicker    Clicker
 	OpenURL    func(string)
+	tsOff      int64  // スマホの時刻 → PCの時刻
+	udpTok     string // 今の接続のUDP用合言葉
+	calibDirty int
 }
 
 func NewApp(cfg *Config, lay *Layouts, inj Injector) *App {
@@ -85,12 +90,33 @@ func NewApp(cfg *Config, lay *Layouts, inj Injector) *App {
 	}
 	a.kbd = NewKbd(a)
 	a.kbd.IME = func() bool { return a.imeOn }
+	_ = loadJSON(filepath.Join(dataDir(), "calib.json"), &a.kbd.Calib)
+	a.kbd.Learned = func() {
+		a.calibDirty++
+		if a.calibDirty >= 20 {
+			a.saveCalibLocked()
+		}
+	}
 	a.clicker = NewClicker()
 	a.applyLocked()
 	return a
 }
 
 func (a *App) now() int64 { return time.Since(a.start).Milliseconds() }
+
+func (a *App) saveCalibLocked() {
+	a.calibDirty = 0
+	c := a.kbd.Calib
+	go func() { _ = saveJSON(filepath.Join(dataDir(), "calib.json"), &c) }()
+}
+
+// ResetCalib はタッチ位置の自動補正を初期化する（設定画面から）。
+func (a *App) ResetCalib() {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	a.kbd.ResetCalib()
+	a.saveCalibLocked()
+}
 
 // applyLocked は設定・配列の変更をキーボードとオーバーレイへ反映する。
 func (a *App) applyLocked() {
@@ -388,11 +414,13 @@ func (a *App) sendCfgLocked() {
 
 // ===== 接続 =====
 
-func (a *App) OnConnect(s Sender, info PhoneInfo) {
+func (a *App) OnConnect(s Sender, info PhoneInfo, udpTok string) {
 	a.mu.Lock()
 	defer a.mu.Unlock()
 	old := a.sess
 	a.sess = s
+	a.udpTok = udpTok
+	a.tsOff = 0
 	if old != nil && old != s {
 		old.Close()
 	}
@@ -416,8 +444,12 @@ func (a *App) OnDisconnect(s Sender) {
 		return
 	}
 	a.sess = nil
+	a.udpTok = ""
 	a.kbd.CancelAll()
 	a.releaseHeldLocked()
+	if a.calibDirty > 0 {
+		a.saveCalibLocked()
+	}
 	a.refreshOverlayLocked()
 	a.toast("スマホ切断")
 	log.Printf("disconnected")
@@ -435,6 +467,17 @@ func (a *App) Handle(s Sender, m *Msg) {
 	case "kt": // キーボードのタッチ（指ごと）
 		if a.mode != "keyboard" {
 			return
+		}
+		// スマホ側の時刻を使う（Wi-Fiの遅れの揺れで「離す直前」の判定が狂わないように）
+		if m.Ts > 0 {
+			if a.tsOff == 0 {
+				a.tsOff = t - m.Ts
+			}
+			if mt := m.Ts + a.tsOff; mt <= t {
+				t = mt
+			} else {
+				a.tsOff = t - m.Ts
+			}
 		}
 		switch m.A {
 		case "d":
@@ -538,6 +581,29 @@ func (a *App) Handle(s Sender, m *Msg) {
 	}
 }
 
+// HandleUDP はUDPで届いたマウスの動き（カーソル移動・スクロール・小窓）を処理する。
+// 取りこぼしても待たないので、Wi-Fiが一瞬途切れてもカーソルが止まりにくい。
+func (a *App) HandleUDP(m *Msg) {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	if a.sess == nil || a.udpTok == "" || m.Tok != a.udpTok {
+		return
+	}
+	switch m.T {
+	case "mm":
+		a.mouseMoveLocked(m.Dx, m.Dy)
+	case "ms":
+		a.scrollLocked(m.Dx, m.Dy)
+	case "mt":
+		a.ov.Update(func(o *OverlayData) {
+			o.MiniTouch = m.A != "u" && m.A != "c"
+			o.MiniX, o.MiniY = m.X, m.Y
+			o.MiniZone = m.Z
+			o.MiniAt = time.Now()
+		})
+	}
+}
+
 func (a *App) mouseMoveLocked(dx, dy float64) {
 	mc := a.cfg.Mouse
 	sp := math.Hypot(dx, dy)
@@ -619,6 +685,7 @@ func (a *App) TickLoop() {
 
 type Status struct {
 	Connected bool      `json:"connected"`
+	Calib     Calib     `json:"calib"`
 	Phone     PhoneInfo `json:"phone"`
 	Mode      string    `json:"mode"`
 	TapRight  bool      `json:"tapRight"`
@@ -633,7 +700,7 @@ func (a *App) Status() Status {
 	a.mu.Lock()
 	defer a.mu.Unlock()
 	return Status{
-		Connected: a.sess != nil, Phone: a.phone, Mode: a.mode,
+		Connected: a.sess != nil, Calib: a.kbd.Calib, Phone: a.phone, Mode: a.mode,
 		TapRight: a.tapRight, IPs: localIPs(), Port: a.cfg.Port, PIN: a.cfg.PIN, DataDir: dataDir(), Version: Version,
 	}
 }

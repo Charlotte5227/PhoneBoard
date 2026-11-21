@@ -32,6 +32,8 @@ type KeyboardCfg struct {
 	AssistStrength   float64 `json:"assistStrength"`   // 入力補助の強さ
 	RepeatDelayMs    int     `json:"repeatDelayMs"`    // BS・矢印などのリピート開始
 	RepeatIntervalMs int     `json:"repeatIntervalMs"` // リピート間隔
+	AutoCalib        bool    `json:"autoCalib"`        // タッチ位置のクセを学習して補正
+	SlipGuardMs      int     `json:"slipGuardMs"`      // 離す直前この時間内に隣のキーへずれたら元のキーにする(0=無効)
 	ClickSound       string  `json:"clickSound"`       // pc / phone / both / off
 	ClickVolume      int     `json:"clickVolume"`      // 0〜100
 }
@@ -99,11 +101,12 @@ func DefaultConfig() *Config {
 		Keyboard: KeyboardCfg{
 			CommitOn: "release", ModMode: "sticky", Assist: true, AssistStrength: 0.8,
 			RepeatDelayMs: 450, RepeatIntervalMs: 60, ClickSound: "pc", ClickVolume: 60,
+			AutoCalib: true, SlipGuardMs: 50,
 		},
 		Haptic: HapticCfg{Enabled: true, HoverMs: 6, CommitMs: 14, ToggleMs: 35, Amp: 200},
 		Overlay: OverlayCfg{
 			Width: 640, Opacity: 92, Anchor: "custom", PosX: 0.5, PosY: 0.8, OffsetX: 0, OffsetY: 0,
-			ShowHints: true, ShowHistory: true, MiniMap: true, MiniWidth: 220, MiniAnchor: "bottom-right", Toast: true,
+			ShowHints: true, ShowHistory: true, MiniMap: false, MiniWidth: 220, MiniAnchor: "bottom-right", Toast: true,
 		},
 		Buttons: ButtonCfg{
 			MouseVolUp: "{KEYBOARD}", MouseVolDown: "{CLICK_L}",

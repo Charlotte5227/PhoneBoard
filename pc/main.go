@@ -28,7 +28,7 @@ func main() {
 
 	go app.TickLoop()
 	go RunServer(app, cfg.Port)
-	go RunDiscovery(cfg.Port)
+	go RunUDP(app, cfg.Port)
 	ready := make(chan string, 1)
 	go RunWeb(app, 39501, ready)
 	url := <-ready

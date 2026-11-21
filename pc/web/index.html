@@ -84,7 +84,11 @@ code{background:var(--panel2);padding:1px 5px;border-radius:4px}
 
 <section data-tab="キーボード">
   <div class="grid" id="f-keyboard"></div>
-  <div class="toolbar"><button class="b" onclick="api('/api/testclick',{})">クリック音を試す</button></div>
+  <div class="toolbar"><button class="b" onclick="api('/api/testclick',{})">クリック音を試す</button>
+    <button class="b" onclick="resetCalib()">タッチ位置の補正をリセット</button><span class="sub" id="calibInfo"></span></div>
+  <h3>打ちミスを減らす仕組み</h3>
+  <p class="sub"><b>タッチ位置の自動補正</b>: 「いつもキーの少し下を押している」などのクセを、左手側・右手側それぞれで打ちながら学習して補正します。打った直後にBSで消したキーは打ち間違いとみなして学習しません。<br>
+  <b>離す瞬間のズレ</b>: 指を離す瞬間に指先が転がって隣のキーに乗っても、直前まで乗っていたキーを入力します。</p>
   <h3>入力補助について</h3>
   <p class="sub">初代iPhoneのように、次に来そうな文字のキーの当たり判定を見えない形で少し広げます。日本語入力中（IMEがON）はローマ字として成立する並び（例: k の次は母音）、英字入力中は英単語として自然な並び（例: th の次は e）を優先します。キーの真ん中をしっかり押した時は補正しません。入力した後で書き換えないので、変換の邪魔にはなりません。</p>
 </section>
@@ -206,6 +210,7 @@ const SCHEMA={
  keyboard:[["commitOn","キーを入力するタイミング","select",{release:"離した時（置いたまま滑らせて直せる）",press:"触れた瞬間（普通のタッチキーボード）"}],
   ["modMode","Shift・Ctrl・Alt・Win・Fn","select",{sticky:"ワンショット（1回押すと次のキーに効く・2回で固定）",hold:"同時押し（押している間だけ効く）"}],
   ["assist","入力補助（次に来そうな文字のキーを押しやすく）","bool"],["assistStrength","入力補助の強さ","range",0.1,2,0.05],
+  ["autoCalib","タッチ位置の自動補正（押す位置のクセを学習）","bool"],["slipGuardMs","離す瞬間のズレを無視する時間(ms, 0=無効)","range",0,120,5],
   ["repeatDelayMs","BS・矢印のリピート開始(ms)","range",200,1200,10],["repeatIntervalMs","リピート間隔(ms)","range",20,200,5],
   ["clickSound","クリック音","select",{pc:"PCで鳴らす",phone:"スマホで鳴らす",both:"両方",off:"鳴らさない"}],["clickVolume","クリック音の大きさ","range",0,100,1]],
  mouse:[["sensitivity","カーソル速度","range",0.3,8,0.1],["accel","加速（速く動かすと大きく動く）","range",0,4,0.1],
@@ -259,6 +264,7 @@ function buildForm(sec,key){
 }
 let saveT;
 function saveCfg(){clearTimeout(saveT);saveT=setTimeout(async()=>{try{cfg=await api('/api/config',cfg);flash()}catch(e){alert(e)}},350)}
+async function resetCalib(){if(!confirm('タッチ位置の補正をリセットしますか？'))return;status=await api('/api/calib/reset',{});renderStatus();flash('リセットしました')}
 async function newPin(){status=await api('/api/pin/new',{});cfg=await api('/api/config');renderStatus()}
 function renderStatus(){
   $('pin').textContent=status.pin;$('ips').innerHTML=(status.ips||[]).join('<br>')||'（見つかりません）';$('port').textContent=status.port;
@@ -267,6 +273,7 @@ function renderStatus(){
   $('phonesize').textContent=status.connected?`${Math.round(status.phone.wdp)}×${Math.round(status.phone.hdp)} dp`:'';
   $('modeinfo').textContent=status.connected?(status.mode=='keyboard'?'キーボード':'マウス'+(status.tapRight?'（タップ=右）':'')):'';
   $('ver').textContent='v'+status.version;
+  const c=status.calib;if(c){const f=v=>(v>=0?'+':'')+v.toFixed(2);$('calibInfo').textContent=` 左手 横${f(c.x[0])} 縦${f(c.y[0])} / 右手 横${f(c.x[1])} 縦${f(c.y[1])}（キー単位・学習${c.n}回）`}
 }
 async function poll(){try{const s=await api('/api/status');const sz=s.phone.wdp!=status.phone.wdp||s.phone.hdp!=status.phone.hdp;status=s;renderStatus();if(sz){fitCanvas();drawK();drawM()}}
   catch(e){$('conn').textContent='PCソフト停止中';$('conn').className='pill bad'}}

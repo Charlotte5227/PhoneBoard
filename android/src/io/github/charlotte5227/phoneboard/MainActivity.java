@@ -447,6 +447,11 @@ public class MainActivity extends Activity implements Client.Listener, PadView.H
     }
 
     @Override
+    public void sendFast(JSONObject o) {
+        client.sendFast(o);
+    }
+
+    @Override
     public void openSetup() {
         setupByUser = true;
         showSetup(true);

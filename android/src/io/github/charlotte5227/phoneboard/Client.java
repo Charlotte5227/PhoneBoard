@@ -54,6 +54,11 @@ public class Client {
     private volatile boolean connected;
     private volatile Socket sock;
     private Thread thread;
+    // カーソル移動などはUDPで送る（Wi-Fiで1つ落ちても再送待ちで止まらないように）
+    private volatile DatagramSocket udp;
+    private volatile String udpTok;
+    private final LinkedBlockingQueue<String> udpq = new LinkedBlockingQueue<String>();
+    private Thread udpThread;
 
     public Client(Context ctx, Listener l) {
         this.ctx = ctx.getApplicationContext();
@@ -95,11 +100,52 @@ public class Client {
             public void run() { loop(); }
         }, "pb-net");
         thread.start();
+        udpThread = new Thread(new Runnable() {
+            public void run() { udpLoop(); }
+        }, "pb-udp");
+        udpThread.start();
+    }
+
+    private void udpLoop() {
+        while (running) {
+            try {
+                String s = udpq.poll(500, TimeUnit.MILLISECONDS);
+                DatagramSocket u = udp;
+                if (s == null || u == null) continue;
+                byte[] b = s.getBytes("UTF-8");
+                u.send(new DatagramPacket(b, b.length));
+            } catch (Exception ignored) {
+            }
+        }
+    }
+
+    /** 取りこぼしても良い連続データ（カーソル移動・スクロール）。UDPが使えればUDPで送る。 */
+    public void sendFast(JSONObject o) {
+        if (!connected) return;
+        String tok = udpTok;
+        if (udp != null && tok != null) {
+            try {
+                o.put("tok", tok);
+            } catch (Exception ignored) {
+            }
+            udpq.offer(o.toString());
+        } else {
+            outq.offer(o.toString());
+        }
+    }
+
+    private void closeUdp() {
+        DatagramSocket u = udp;
+        udp = null;
+        udpTok = null;
+        udpq.clear();
+        if (u != null) u.close();
     }
 
     public synchronized void stop() {
         running = false;
         closeSock();
+        closeUdp();
         if (thread != null) thread.interrupt();
     }
 
@@ -193,6 +239,17 @@ public class Client {
                     try { m = new JSONObject(line); } catch (Exception e) { continue; }
                     String t = m.optString("t");
                     if ("welcome".equals(t)) {
+                        int up = m.optInt("udp", 0);
+                        String tok = m.optString("tok", "");
+                        if (up > 0 && tok.length() > 0) {
+                            try {
+                                DatagramSocket u = new DatagramSocket();
+                                u.connect(new InetSocketAddress(s.getInetAddress(), up));
+                                udp = u;
+                                udpTok = tok;
+                            } catch (Exception ignored) {
+                            }
+                        }
                         connected = true;
                         fails = 0;
                         pcName = m.optString("host", pcName);
@@ -215,6 +272,7 @@ public class Client {
             }
             if (sock == s) closeSock();
             try { s.close(); } catch (Exception ignored) { }
+            closeUdp();
             boolean was = connected;
             connected = false;
             if (was) status("切断されました。再接続中…", false);

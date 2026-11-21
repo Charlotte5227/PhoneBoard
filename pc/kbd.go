@@ -33,7 +33,23 @@ type finger struct {
 	reps    int
 	lastRep int64
 	downT   int64
-	changed bool // 触れた後に別のキーへ移動した（探していた）
+	changed bool    // 触れた後に別のキーへ移動した（探していた）
+	prevKey int     // ひとつ前に乗っていたキー
+	prevDur int64   // ひとつ前のキーに乗っていた時間
+	chX     float64 // キーが変わる直前の位置
+	chY     float64
+}
+
+// Calib はタッチ位置のクセ（左手側[0]・右手側[1]、キー1個=1の単位）。
+type Calib struct {
+	X [2]float64 `json:"x"`
+	Y [2]float64 `json:"y"`
+	N int        `json:"n"` // 学習した回数
+}
+
+type calibSample struct {
+	side   int
+	dx, dy float64
 }
 
 // Kbd は横向きの物理配列キーボードの判定を行う。PC側で判定するので、PC画面の表示と完全に一致する。
@@ -48,6 +64,9 @@ type Kbd struct {
 	ctx     []rune              // 入力補助用: 今の単語
 	IME     func() bool         // IMEがONか
 	flash   map[int]int64       // 入力したキー → 時刻（表示用）
+	Calib   Calib               // タッチ位置の自動補正
+	pending *calibSample        // 直前に入力したキーのずれ（次がBSでなければ学習に使う）
+	Learned func()              // 学習した時（保存用）
 }
 
 func NewKbd(out KbdOut) *Kbd {
@@ -73,12 +92,30 @@ func (k *Kbd) modActive(m string) bool {
 
 func (k *Kbd) fnActive() bool { return k.modActive("fn") }
 
+func (k *Kbd) side(x float64) int {
+	if x < 0.5 {
+		return 0
+	}
+	return 1
+}
+
+// pos は画面位置(0〜1)をキー単位の座標にし、タッチ位置のクセを補正する。
+func (k *Kbd) pos(x, y float64) (float64, float64) {
+	bx, by := x*k.board.Cols, y*k.board.Rows
+	if k.cfg.AutoCalib {
+		s := k.side(x)
+		bx -= k.Calib.X[s]
+		by -= k.Calib.Y[s]
+	}
+	return bx, by
+}
+
 // rawHit は位置(0〜1)を含むキー。
 func (k *Kbd) rawHit(x, y float64) int {
 	if k.board == nil {
 		return -1
 	}
-	bx, by := x*k.board.Cols, y*k.board.Rows
+	bx, by := k.pos(x, y)
 	for i := len(k.board.Keys) - 1; i >= 0; i-- {
 		key := &k.board.Keys[i]
 		if bx >= key.X && bx < key.X+key.W && by >= key.Y && by < key.Y+key.H {
@@ -98,7 +135,7 @@ func (k *Kbd) Hit(x, y float64) int {
 	if key0.Letter() == 0 || k.modActive("ctrl") || k.modActive("alt") || k.modActive("win") || k.fnActive() {
 		return k0
 	}
-	bx, by := x*k.board.Cols, y*k.board.Rows
+	bx, by := k.pos(x, y)
 	// キーの中心付近をしっかり押した時は、そのまま
 	if math.Abs(bx-(key0.X+key0.W/2)) < key0.W*0.22 && math.Abs(by-(key0.Y+key0.H/2)) < key0.H*0.22 {
 		return k0
@@ -131,7 +168,7 @@ func (k *Kbd) Down(id int, x, y float64, t int64) {
 	if old, ok := k.fingers[id]; ok {
 		k.release(old, false)
 	}
-	f := &finger{id: id, x: x, y: y, downT: t, keyT: t}
+	f := &finger{id: id, x: x, y: y, downT: t, keyT: t, prevKey: -1}
 	f.key = k.Hit(x, y)
 	k.fingers[id] = f
 	if f.key < 0 {
@@ -161,11 +198,14 @@ func (k *Kbd) Move(id int, x, y float64, t int64) {
 	if !ok {
 		return
 	}
+	px, py := f.x, f.y
 	f.x, f.y = x, y
 	if f.mod != "" || f.done {
 		return
 	}
 	if h := k.Hit(x, y); h != f.key {
+		f.prevKey, f.prevDur = f.key, t-f.keyT
+		f.chX, f.chY = px, py
 		f.key = h
 		f.keyT = t
 		f.changed = true
@@ -181,6 +221,13 @@ func (k *Kbd) Up(id int, x, y float64, t int64) {
 		return
 	}
 	k.Move(id, x, y, t)
+	// 離す瞬間の指の転がりで隣のキーに乗った場合は、直前まで乗っていたキーにする
+	// （キーの外へ逃がした＝取り消し、や大きく動かした時は除く）
+	if g := int64(k.cfg.SlipGuardMs); g > 0 && f.mod == "" && !f.done && f.prevKey >= 0 && f.key >= 0 &&
+		t-f.keyT < g && f.prevDur >= g &&
+		math.Hypot((f.x-f.chX)*k.board.Cols, (f.y-f.chY)*k.board.Rows) < 0.5 {
+		f.key = f.prevKey
+	}
 	k.release(f, true)
 }
 
@@ -215,7 +262,45 @@ func (k *Kbd) release(f *finger, commit bool) {
 		k.out.Feedback("cancel") // キーの無い所（最上段の空き）で離した＝取り消し
 		return
 	}
+	k.learn(f)
 	k.commit(f.key)
+}
+
+// learn はタッチ位置のクセを学習する。
+// 直前に入力したキーのずれは、次に打ったキーがBSでなければ（＝打ち間違いでなかったら）使う。
+func (k *Kbd) learn(f *finger) {
+	if !k.cfg.AutoCalib {
+		k.pending = nil
+		return
+	}
+	key := &k.board.Keys[f.key]
+	if p := k.pending; p != nil && key.Key != "BS" {
+		const rate = 0.06
+		k.Calib.X[p.side] = clampF(k.Calib.X[p.side]+rate*p.dx, -0.35, 0.35)
+		k.Calib.Y[p.side] = clampF(k.Calib.Y[p.side]+rate*p.dy, -0.35, 0.35)
+		k.Calib.N++
+		if k.Learned != nil {
+			k.Learned()
+		}
+	}
+	k.pending = nil
+	// 普通の大きさの文字キーだけを使う（Space・Enter・Shiftなど大きいキーは中心がはっきりしないため）
+	if key.Key == "" || key.Key == "BS" || key.Mod != "" || key.Action != "" || key.W > 1.3 || key.H > 1.3 || f.changed || k.fnActive() {
+		return
+	}
+	bx, by := k.pos(f.x, f.y)
+	dx := bx - (key.X + key.W/2)
+	dy := by - (key.Y + key.H/2)
+	if math.Abs(dx) > 0.7 || math.Abs(dy) > 0.7 {
+		return
+	}
+	k.pending = &calibSample{side: k.side(f.x), dx: dx, dy: dy}
+}
+
+// ResetCalib はタッチ位置の補正を初期化する。
+func (k *Kbd) ResetCalib() {
+	k.Calib = Calib{}
+	k.pending = nil
 }
 
 // commit はキーを入力する。
