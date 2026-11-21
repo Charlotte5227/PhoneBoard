@@ -14,6 +14,7 @@ type Injector interface {
 	MouseButton(btn int, down bool) // 0:左 1:右 2:中
 	Wheel(delta int, horizontal bool)
 	SetIME(open bool, kana bool)
+	Foreground() uintptr // 前面のウィンドウ（アプリの切り替えを知るため）
 }
 
 const (

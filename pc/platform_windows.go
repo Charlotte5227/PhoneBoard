@@ -246,6 +246,11 @@ func imeMsg(wnd uintptr, cmd, val uintptr) (uintptr, bool) {
 
 // SetIME は前面ウィンドウのIMEをON/OFFする。
 // 変換モード（ひらがな/ローマ字など）には触れない（触ると入力中の文字が確定されることがある）。
+func (w *winInjector) Foreground() uintptr {
+	h, _, _ := pGetForegroundWindow.Call()
+	return h
+}
+
 func (w *winInjector) SetIME(open bool, kana bool) {
 	fg, _, _ := pGetForegroundWindow.Call()
 	if fg == 0 {

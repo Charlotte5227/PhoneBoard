@@ -52,7 +52,6 @@ public class MainActivity extends Activity implements Client.Listener, PadView.H
     private String lastStatus = "";
     private WifiManager.WifiLock wifiLock;
     private SoundPool sounds;
-    private int clickSmall, clickBig;
 
     @Override
     protected void onCreate(Bundle b) {
@@ -142,29 +141,66 @@ public class MainActivity extends Activity implements Client.Listener, PadView.H
                 | View.SYSTEM_UI_FLAG_LAYOUT_STABLE);
     }
 
-    // ===== クリック音（スマホで鳴らす設定の時） =====
+    // ===== クリック音・注意音（スマホで鳴らす設定の時）。PC側と同じ合成音 =====
+
+    private static final String[] GROUPS = {"vowel", "letter", "symbol", "heavy", "func", "mod", "warn"};
+    private final int[] soundIds = new int[GROUPS.length];
 
     private void initSounds() {
         try {
-            sounds = new SoundPool.Builder().setMaxStreams(6).setAudioAttributes(new AudioAttributes.Builder()
+            sounds = new SoundPool.Builder().setMaxStreams(8).setAudioAttributes(new AudioAttributes.Builder()
                     .setUsage(AudioAttributes.USAGE_ASSISTANCE_SONIFICATION)
                     .setContentType(AudioAttributes.CONTENT_TYPE_SONIFICATION).build()).build();
-            clickSmall = sounds.load(writeClick("click_s.wav", false), 1);
-            clickBig = sounds.load(writeClick("click_b.wav", true), 1);
+            for (int i = 0; i < GROUPS.length; i++) soundIds[i] = sounds.load(writeWav(GROUPS[i]), 1);
         } catch (Throwable ignored) {
             sounds = null;
         }
     }
 
-    /** PC側と同じ合成クリック音をWAVファイルにする */
-    private String writeClick(String name, boolean big) throws Exception {
+    private static double sin(double f, double t) { return Math.sin(2 * Math.PI * f * t); }
+
+    private static double synthAt(String g, double t, Random rng) {
+        double noise = rng.nextDouble() * 2 - 1;
+        if ("vowel".equals(g)) return 0.65 * (sin(1900, t) + 0.3 * sin(3800, t)) * Math.exp(-t / 0.022) + 0.25 * noise * Math.exp(-t / 0.003);
+        if ("symbol".equals(g)) {
+            double tri = 2 / Math.PI * Math.asin(sin(950, t)) + 0.4 * sin(1900, t);
+            return 0.6 * tri * Math.exp(-t / 0.012) + 0.35 * noise * Math.exp(-t / 0.004);
+        }
+        if ("heavy".equals(g)) return 0.8 * sin(430, t) * Math.exp(-t / 0.028) + 0.45 * noise * Math.exp(-t / 0.007);
+        if ("func".equals(g)) {
+            double v = 0.5 * sin(1700, t) * Math.exp(-t / 0.006);
+            double t2 = t - 0.018;
+            if (t2 >= 0) v += 0.5 * sin(1700, t2) * Math.exp(-t2 / 0.006);
+            return v + 0.3 * noise * Math.exp(-t / 0.003);
+        }
+        if ("mod".equals(g)) return 0.45 * sin(3000, t) * Math.exp(-t / 0.004) + 0.2 * noise * Math.exp(-t / 0.002);
+        if ("warn".equals(g)) return 0.75 * (tone(1050, t, 0, 0.065) + tone(700, t, 0.090, 0.100));
+        return 0.45 * sin(1500, t) * Math.exp(-t / 0.010) + 0.55 * noise * Math.exp(-t / 0.006);
+    }
+
+    private static double tone(double f, double t, double t0, double d) {
+        double x = t - t0;
+        if (x < 0 || x > d) return 0;
+        double env = Math.min(1, x / 0.004) * Math.exp(-x / (d * 0.6));
+        return (sin(f, x) + 0.25 * sin(3 * f, x)) * env;
+    }
+
+    private static double duration(String g) {
+        if ("vowel".equals(g)) return 0.055;
+        if ("symbol".equals(g)) return 0.040;
+        if ("heavy".equals(g)) return 0.070;
+        if ("func".equals(g)) return 0.045;
+        if ("mod".equals(g)) return 0.022;
+        if ("warn".equals(g)) return 0.200;
+        return 0.032;
+    }
+
+    private String writeWav(String g) throws Exception {
         int rate = 44100;
-        double dur = big ? 0.040 : 0.028, freq = big ? 1300 : 2400;
-        int n = (int) (dur * rate);
-        Random rng = new Random(1);
+        int n = (int) (duration(g) * rate);
+        Random rng = new Random(g.length() + 7);
         byte[] b = new byte[44 + n * 2];
-        String hdr = "RIFF";
-        System.arraycopy(hdr.getBytes("US-ASCII"), 0, b, 0, 4);
+        System.arraycopy("RIFF".getBytes("US-ASCII"), 0, b, 0, 4);
         le32(b, 4, 36 + n * 2);
         System.arraycopy("WAVEfmt ".getBytes("US-ASCII"), 0, b, 8, 8);
         le32(b, 16, 16);
@@ -177,14 +213,10 @@ public class MainActivity extends Activity implements Client.Listener, PadView.H
         System.arraycopy("data".getBytes("US-ASCII"), 0, b, 36, 4);
         le32(b, 40, n * 2);
         for (int i = 0; i < n; i++) {
-            double t = i / (double) rate;
-            double env = Math.exp(-t / 0.006);
-            double tone = Math.sin(2 * Math.PI * freq * t) * Math.exp(-t / 0.010);
-            double noise = (rng.nextDouble() * 2 - 1) * env;
-            double v = Math.max(-1, Math.min(1, (0.55 * noise + 0.45 * tone) * 0.9));
-            le16(b, 44 + i * 2, (int) (v * 32767));
+            double v = Math.max(-1, Math.min(1, synthAt(g, i / (double) rate, rng)));
+            le16(b, 44 + i * 2, (int) (v * 32000));
         }
-        File f = new File(getCacheDir(), name);
+        File f = new File(getCacheDir(), "snd_" + g + ".wav");
         FileOutputStream os = new FileOutputStream(f);
         os.write(b);
         os.close();
@@ -201,10 +233,14 @@ public class MainActivity extends Activity implements Client.Listener, PadView.H
         le16(b, o + 2, v >> 16);
     }
 
-    private void playClick(boolean big, int vol) {
+    /** group: 音の系統、semi: 高さ（半音、0〜12）、vol: 0〜100 */
+    private void playSound(String group, int semi, int vol) {
         if (sounds == null) return;
+        int idx = 1;
+        for (int i = 0; i < GROUPS.length; i++) if (GROUPS[i].equals(group)) idx = i;
         float v = Math.max(0, Math.min(1, vol / 100f));
-        sounds.play(big ? clickBig : clickSmall, v, v, 1, 0, 1);
+        float rate = "warn".equals(group) ? 1f : (float) Math.max(0.5, Math.min(2.0, Math.pow(2, semi / 12.0)));
+        sounds.play(soundIds[idx], v, v, 1, 0, rate);
     }
 
     // ===== 接続設定画面 =====
@@ -425,7 +461,7 @@ public class MainActivity extends Activity implements Client.Listener, PadView.H
         } else if ("state".equals(t)) {
             pad.setState(m);
         } else if ("click".equals(t)) {
-            playClick(m.optBoolean("big", false), m.optInt("vol", 60));
+            playSound(m.optString("g", "letter"), m.optInt("p", 6), m.optInt("vol", 60));
         } else if ("vib".equals(t)) {
             int amp = m.optInt("amp", 200);
             JSONArray pat = m.optJSONArray("pat");

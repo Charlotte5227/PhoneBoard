@@ -112,7 +112,11 @@ func RunWeb(app *App, port int, ready chan<- string) {
 			http.Error(w, "POST only", 405)
 			return
 		}
-		app.TestClick()
+		semi := -1
+		if v := r.URL.Query().Get("p"); v != "" {
+			fmt.Sscan(v, &semi)
+		}
+		app.TestSound(r.URL.Query().Get("g"), semi)
 		writeJSON(w, map[string]bool{"ok": true})
 	})
 

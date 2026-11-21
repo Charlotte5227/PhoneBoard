@@ -8,7 +8,9 @@ func NewInjector() Injector { return &LogInjector{} }
 
 type nullClicker struct{}
 
-func (nullClicker) Click(big bool, volume int) { log.Printf("[click] big=%v vol=%d", big, volume) }
+func (nullClicker) Play(group string, semi int, volume int) {
+	log.Printf("[sound] %s semi=%d vol=%d", group, semi, volume)
+}
 
 func NewClicker() Clicker { return nullClicker{} }
 

@@ -183,6 +183,7 @@ type ui struct {
 	main      uintptr
 	kb, mini  *ovWin
 	toast     *ovWin
+	echo      *ovWin
 	data      OverlayData
 	ver       uint64
 	scale     float64
@@ -220,6 +221,7 @@ func RunUI(app *App) {
 	u.kb = u.newOverlay("PhoneBoard Keyboard", u.paintKb)
 	u.mini = u.newOverlay("PhoneBoard Mouse", u.paintMini)
 	u.toast = u.newOverlay("PhoneBoard Toast", u.paintToast)
+	u.echo = u.newOverlay("PhoneBoard Echo", u.paintEcho)
 
 	u.tbCreated, _, _ = pRegisterWindowMessageW.Call(uintptr(unsafe.Pointer(u16("TaskbarCreated"))))
 	u.addTray()
@@ -475,6 +477,23 @@ func (u *ui) tick() {
 		u.show(u.mini, x, y, w, h, c.Opacity, changed)
 	} else {
 		u.hide(u.mini)
+	}
+
+	// 入力したキーを画面中央にうっすら表示（だんだん消える）
+	echoDur := time.Duration(c.EchoMs) * time.Millisecond
+	if age := now.Sub(d.EchoAt); c.Echo && d.Echo != "" && d.Connected && age < echoDur {
+		h := int32(float64(c.EchoSize) * scale)
+		n := len([]rune(d.Echo))
+		w := h
+		if n > 1 {
+			w = int32(float64(h) * (0.45*float64(n) + 0.4))
+		}
+		x := wa.L + (wa.R-wa.L-w)/2
+		y := wa.T + int32(c.EchoY*float64(wa.B-wa.T)) - h/2
+		fade := 1 - float64(age)/float64(echoDur)
+		u.show(u.echo, x, y, w, h, int(float64(c.EchoOpacity)*fade*fade+0.5), true)
+	} else {
+		u.hide(u.echo)
 	}
 
 	// トースト（モード切替などのお知らせ）
@@ -785,6 +804,20 @@ func (u *ui) paintMini(c *canvas, cw, ch int32) {
 		fy := py + int32(d.MiniY*float64(ph))
 		c.circle(fx, fy, u.px(5), colDot, rgb(255, 255, 255), u.px(1))
 	}
+}
+
+func (u *ui) paintEcho(c *canvas, cw, ch int32) {
+	col, bg := colText, rgb(20, 20, 26)
+	if u.data.EchoWarn {
+		col, bg = rgb(255, 120, 120), rgb(60, 16, 20)
+	}
+	c.round(0, 0, cw, ch, ch/5, bg, 0, 0)
+	n := len([]rune(u.data.Echo))
+	fs := float64(ch) * 0.62
+	if n > 1 {
+		fs = float64(ch) * 0.42
+	}
+	c.text(u.data.Echo, 0, 0, cw, ch, int(fs), col, true, dtCenter)
 }
 
 func (u *ui) paintToast(c *canvas, cw, ch int32) {

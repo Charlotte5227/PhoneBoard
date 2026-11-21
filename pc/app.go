@@ -45,11 +45,6 @@ type Msg struct {
 	Tok  string  `json:"tok"` // UDPで届くメッセージの合言葉
 }
 
-// Clicker はPCでクリック音を鳴らす（Windows: sound_windows.go）。
-type Clicker interface {
-	Click(big bool, volume int)
-}
-
 type App struct {
 	mu         sync.Mutex
 	cfg        *Config
@@ -74,6 +69,7 @@ type App struct {
 	OpenURL    func(string)
 	tsOff      int64  // スマホの時刻 → PCの時刻
 	udpTok     string // 今の接続のUDP用合言葉
+	lastFg     uintptr
 	calibDirty int
 }
 
@@ -193,27 +189,75 @@ func (a *App) vib(kind string) {
 	}
 }
 
-// click はクリック音（設定に応じてPC/スマホ）。
-func (a *App) click(big bool) {
+// sound は音を鳴らす（設定に応じてPC/スマホ）。semi は音の高さ（半音、0〜12）。
+func (a *App) sound(group string, semi int) {
 	k := a.cfg.Keyboard
-	if k.ClickVolume <= 0 {
+	vol := k.ClickVolume
+	if group == SndWarn {
+		vol = k.WarnVolume
+	} else if !k.KeyTones {
+		group, semi = SndLetter, 6
+	}
+	if vol <= 0 || k.ClickSound == "off" {
 		return
 	}
 	if (k.ClickSound == "pc" || k.ClickSound == "both") && a.clicker != nil {
-		a.clicker.Click(big, k.ClickVolume)
+		a.clicker.Play(group, semi, vol)
 	}
 	if k.ClickSound == "phone" || k.ClickSound == "both" {
-		a.send(map[string]any{"t": "click", "big": big, "vol": k.ClickVolume})
+		a.send(map[string]any{"t": "click", "g": group, "p": semi, "vol": vol})
 	}
+}
+
+var symbolKeys = map[string]bool{"MINUS": true, "CARET": true, "YEN": true, "AT": true, "LBRACKET": true, "RBRACKET": true,
+	"SEMICOLON": true, "COLON": true, "COMMA": true, "PERIOD": true, "SLASH": true, "BACKSLASH": true}
+
+// keyTone はキーの音色（系統）と高さ（横位置: 左が低く右が高い）。
+func (a *App) keyTone(ev KeyEvent) (string, int) {
+	b := &a.lay.Board
+	semi := 6
+	if ev.Index >= 0 && ev.Index < len(b.Keys) && b.Cols > 0 {
+		k := &b.Keys[ev.Index]
+		semi = int(math.Round((k.X + k.W/2) / b.Cols * 12))
+	}
+	switch {
+	case ev.Letter != 0 && isVowel(ev.Letter):
+		return SndVowel, semi
+	case ev.Letter != 0:
+		return SndLetter, semi
+	case ev.Name == "SPACE" || ev.Name == "ENTER" || ev.Name == "BS":
+		return SndHeavy, semi
+	case !ev.Fn && (symbolKeys[ev.Name] || (len(ev.Name) == 1 && ev.Name[0] >= '0' && ev.Name[0] <= '9')):
+		return SndSymbol, semi
+	}
+	return SndFunc, semi
+}
+
+// echo は入力したキーを画面中央にうっすら表示する。
+func (a *App) echo(s string, warn bool) {
+	if !a.cfg.Overlay.Echo {
+		return
+	}
+	a.ov.Update(func(m *OverlayData) {
+		m.Echo = s
+		m.EchoWarn = warn
+		m.EchoAt = time.Now()
+	})
 }
 
 // ===== キーボードエンジンからの出力（App のロック中に呼ばれる） =====
 
-func (a *App) KeyPress(mods []uint16, vk uint16, label string, letter rune) {
-	a.inj.KeyCombo(mods, vk)
-	big := vk == vkReturn || vk == vkSpace || vk == vkBack
-	a.click(big)
+func (a *App) KeyPress(ev KeyEvent) {
+	a.inj.KeyCombo(ev.Mods, ev.VK)
+	if ev.Warn != "" {
+		a.sound(SndWarn, 0)
+	} else {
+		a.sound(a.keyTone(ev))
+	}
 	a.vib("commit")
+	vk := ev.VK
+	label := ev.Label
+	a.echo(label, ev.Warn != "")
 	// 表示用の入力履歴（あくまで目安）
 	switch {
 	case vk == vkBack:
@@ -224,7 +268,7 @@ func (a *App) KeyPress(mods []uint16, vk uint16, label string, letter rune) {
 		a.history = append(a.history, '⏎')
 	case vk == vkSpace:
 		a.history = append(a.history, '␣')
-	case len(mods) == 0 || (len(mods) == 1 && mods[0] == modVK["shift"]):
+	case len(ev.Mods) == 0 || (len(ev.Mods) == 1 && ev.Mods[0] == modVK["shift"]):
 		if r := []rune(label); len(r) == 1 {
 			a.history = append(a.history, r[0])
 		}
@@ -246,7 +290,7 @@ func (a *App) ModKey(vk uint16, down bool) {
 }
 
 func (a *App) Action(s string) {
-	a.click(false)
+	a.sound(SndFunc, 0)
 	a.doActionLocked(s, "tap")
 }
 
@@ -256,7 +300,7 @@ func (a *App) Feedback(kind string) {
 		a.vib("hover")
 	case "mod":
 		a.vib("mod")
-		a.click(false)
+		a.sound(SndMod, 6)
 	case "cancel":
 		a.vib("cancel")
 	}
@@ -673,7 +717,14 @@ func (a *App) TickLoop() {
 				a.mu.Lock()
 				if on != a.imeOn {
 					a.imeOn = on
+					if on {
+						a.kbd.ResetJaWarn() // IMEをONにした＝日本語に直した
+					}
 					a.refreshOverlayLocked()
+				}
+				if fg := a.inj.Foreground(); fg != a.lastFg {
+					a.lastFg = fg
+					a.kbd.ResetJaWarn() // 別のアプリ・ウィンドウに移った
 				}
 			}
 		}
@@ -746,11 +797,28 @@ func (a *App) Preview() {
 	a.ov.Update(func(m *OverlayData) { m.PreviewUntil = time.Now().Add(4 * time.Second) })
 }
 
-// TestClick はクリック音を試しに鳴らす。
-func (a *App) TestClick() {
+// TestSound は音を試しに鳴らす（設定画面の試聴）。semi<0 なら左→右の音階で鳴らす。
+func (a *App) TestSound(group string, semi int) {
 	a.mu.Lock()
-	defer a.mu.Unlock()
-	a.click(false)
+	k := a.cfg.Keyboard
+	a.mu.Unlock()
+	if group == "" {
+		group = SndLetter
+	}
+	if semi >= 0 {
+		a.mu.Lock()
+		a.sound(group, semi)
+		a.mu.Unlock()
+		return
+	}
+	go func() {
+		for _, s := range []int{0, 3, 6, 9, 12} {
+			a.mu.Lock()
+			a.sound(group, s)
+			a.mu.Unlock()
+			time.Sleep(time.Duration(140+k.ClickVolume*0) * time.Millisecond)
+		}
+	}()
 }
 
 // ===== オーバーレイ表示用モデル =====
@@ -767,6 +835,9 @@ type OverlayData struct {
 	Toast        string
 	ToastAt      time.Time
 	Zones        []MouseZone
+	Echo         string // 画面中央にうっすら表示する、入力したキー
+	EchoWarn     bool
+	EchoAt       time.Time
 	MiniTouch    bool
 	MiniX, MiniY float64
 	MiniZone     int

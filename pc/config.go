@@ -34,6 +34,10 @@ type KeyboardCfg struct {
 	RepeatIntervalMs int     `json:"repeatIntervalMs"` // リピート間隔
 	AutoCalib        bool    `json:"autoCalib"`        // タッチ位置のクセを学習して補正
 	SlipGuardMs      int     `json:"slipGuardMs"`      // 離す直前この時間内に隣のキーへずれたら元のキーにする(0=無効)
+	KeyTones         bool    `json:"keyTones"`         // キーごとに音を変える（系統で音色・横位置で高さ）
+	Warn             bool    `json:"warn"`             // 日本語入力中、ローマ字として変な子音の並びで注意音
+	WarnAlpha        bool    `json:"warnAlpha"`        // 英字のまま日本語を打っていそうな時に注意音（一度だけ）
+	WarnVolume       int     `json:"warnVolume"`       // 注意音の大きさ
 	ClickSound       string  `json:"clickSound"`       // pc / phone / both / off
 	ClickVolume      int     `json:"clickVolume"`      // 0〜100
 }
@@ -60,6 +64,11 @@ type OverlayCfg struct {
 	MiniWidth   int     `json:"miniWidth"`   //
 	MiniAnchor  string  `json:"miniAnchor"`  //
 	Toast       bool    `json:"toast"`       // モード切替などを画面に表示
+	Echo        bool    `json:"echo"`        // 入力したキーを画面中央にうっすら表示
+	EchoSize    int     `json:"echoSize"`    // 文字の大きさ(px)
+	EchoOpacity int     `json:"echoOpacity"` // 濃さ %
+	EchoMs      int     `json:"echoMs"`      // 表示時間(ms)
+	EchoY       float64 `json:"echoY"`       // 縦位置（画面に対する割合、0.5=中央）
 }
 
 type ButtonCfg struct {
@@ -102,11 +111,13 @@ func DefaultConfig() *Config {
 			CommitOn: "release", ModMode: "sticky", Assist: true, AssistStrength: 0.8,
 			RepeatDelayMs: 450, RepeatIntervalMs: 60, ClickSound: "pc", ClickVolume: 60,
 			AutoCalib: true, SlipGuardMs: 50,
+			KeyTones: true, Warn: true, WarnAlpha: true, WarnVolume: 70,
 		},
 		Haptic: HapticCfg{Enabled: true, HoverMs: 6, CommitMs: 14, ToggleMs: 35, Amp: 200},
 		Overlay: OverlayCfg{
 			Width: 640, Opacity: 92, Anchor: "custom", PosX: 0.5, PosY: 0.8, OffsetX: 0, OffsetY: 0,
 			ShowHints: true, ShowHistory: true, MiniMap: false, MiniWidth: 220, MiniAnchor: "bottom-right", Toast: true,
+			Echo: true, EchoSize: 120, EchoOpacity: 30, EchoMs: 450, EchoY: 0.5,
 		},
 		Buttons: ButtonCfg{
 			MouseVolUp: "{KEYBOARD}", MouseVolDown: "{CLICK_L}",
@@ -186,6 +197,21 @@ func (c *Config) Normalize() {
 	}
 	if o.MiniAnchor == "" {
 		o.MiniAnchor = "bottom-right"
+	}
+	if c.Keyboard.WarnVolume < 0 || c.Keyboard.WarnVolume > 100 {
+		c.Keyboard.WarnVolume = d.Keyboard.WarnVolume
+	}
+	if c.Overlay.EchoSize < 30 || c.Overlay.EchoSize > 600 {
+		c.Overlay.EchoSize = d.Overlay.EchoSize
+	}
+	if c.Overlay.EchoOpacity < 5 || c.Overlay.EchoOpacity > 100 {
+		c.Overlay.EchoOpacity = d.Overlay.EchoOpacity
+	}
+	if c.Overlay.EchoMs < 100 || c.Overlay.EchoMs > 3000 {
+		c.Overlay.EchoMs = d.Overlay.EchoMs
+	}
+	if c.Overlay.EchoY <= 0 || c.Overlay.EchoY >= 1 {
+		c.Overlay.EchoY = d.Overlay.EchoY
 	}
 }
 

@@ -10,14 +10,20 @@ import (
 	"testing"
 )
 
-type kout struct{ log []string }
+type kout struct {
+	log   []string
+	warns []string
+}
 
-func (o *kout) KeyPress(mods []uint16, vk uint16, label string, letter rune) {
+func (o *kout) KeyPress(ev KeyEvent) {
 	s := ""
-	for _, m := range mods {
+	for _, m := range ev.Mods {
 		s += map[uint16]string{0xA0: "S+", 0xA2: "C+", 0xA4: "A+", 0x5B: "W+"}[m]
 	}
-	o.log = append(o.log, s+label)
+	o.log = append(o.log, s+ev.Label)
+	if ev.Warn != "" {
+		o.warns = append(o.warns, ev.Label+":"+ev.Warn)
+	}
 }
 func (o *kout) ModKey(vk uint16, down bool) {
 	o.log = append(o.log, fmt.Sprintf("mod%#x:%v", vk, down))
@@ -336,5 +342,91 @@ func TestAutoCalib(t *testing.T) {
 	r.tap(1, "O", 0, 0)
 	if r.k.Calib.X[1] != before.X[1] && math.Abs(r.k.Calib.X[1]-before.X[1]) > 0.001 {
 		t.Fatalf("learned from typo: %+v -> %+v", before, r.k.Calib)
+	}
+}
+
+func (r *krig) typeWord(w string) {
+	for _, c := range strings.ToUpper(w) {
+		r.tap(1, string(c), 0, 0)
+	}
+}
+
+func TestWarnRomaji(t *testing.T) {
+	r := newKrig(func(c *KeyboardCfg) { c.Assist = false; c.AutoCalib = false })
+	r.ime = true
+	for _, w := range []string{"kakko", "konnnichiha", "kyouha", "shita", "tsukue", "xtu", "nkai", "chotto", "dhi", "fyu"} {
+		r.typeWord(w)
+		r.tap(1, "Space", 0, 0)
+		if len(r.o.warns) != 0 {
+			t.Fatalf("%s: unexpected warn %v", w, r.o.warns)
+		}
+	}
+	r.typeWord("kt")
+	if strings.Join(r.o.warns, ",") != "t:romaji" {
+		t.Fatalf("kt: %v", r.o.warns)
+	}
+	r.o.warns = nil
+	r.tap(1, "Space", 0, 0)
+	r.typeWord("asdf")
+	if strings.Join(r.o.warns, ",") != "d:romaji,f:romaji" {
+		t.Fatalf("asdf: %v", r.o.warns)
+	}
+}
+
+func TestWarnAlphaJapanese(t *testing.T) {
+	r := newKrig(func(c *KeyboardCfg) { c.Assist = false; c.AutoCalib = false })
+	r.ime = false
+	// 普通の英語では鳴らない
+	for _, w := range []string{"banana", "because", "tomato", "karaoke", "information", "hello"} {
+		r.typeWord(w)
+		r.tap(1, "Space", 0, 0)
+	}
+	if len(r.o.warns) != 0 {
+		t.Fatalf("english warned: %v", r.o.warns)
+	}
+	// 英字のまま日本語 → 早い段階で一度だけ
+	r.typeWord("konnnitiwa")
+	r.tap(1, ",", 0, 0)
+	r.typeWord("watasihaosusigatabetaidesu")
+	if strings.Join(r.o.warns, ",") != "i:alpha" {
+		t.Fatalf("warns: %v", r.o.warns)
+	}
+	// IMEをON→OFFにした・アプリを切り替えた後は、また鳴る
+	r.o.warns = nil
+	r.k.ResetJaWarn()
+	r.tap(1, "Space", 0, 0)
+	r.typeWord("watasiha")
+	if strings.Join(r.o.warns, ",") != "i:alpha" {
+		t.Fatalf("after reset: %v", r.o.warns)
+	}
+}
+
+func TestSoundMixer(t *testing.T) {
+	m := NewMixer()
+	for _, g := range SoundGroups {
+		if s := synth(g); len(s) < 500 {
+			t.Fatalf("%s too short", g)
+		}
+	}
+	// 速く打った音が重なっても途切れず、最後まで鳴って消える
+	m.Add(SndLetter, 0, 80)
+	buf := make([]int16, 200)
+	m.Fill(buf)
+	m.Add(SndVowel, 12, 80)
+	m.Add(SndHeavy, 6, 80)
+	nonzero := 0
+	for i := 0; i < 30; i++ {
+		m.Fill(buf)
+		for _, v := range buf {
+			if v != 0 {
+				nonzero++
+			}
+		}
+	}
+	if nonzero == 0 || m.Active() {
+		t.Fatalf("mixer: nonzero=%d active=%v", nonzero, m.Active())
+	}
+	if w := renderWAV(SndWarn, 0, 70); len(w) < 1000 || string(w[:4]) != "RIFF" {
+		t.Fatal("wav")
 	}
 }

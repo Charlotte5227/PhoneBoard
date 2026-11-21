@@ -27,5 +27,6 @@ func (l *LogInjector) TypeUnicode(r rune)                { l.rec("uni " + string
 func (l *LogInjector) MouseMove(dx, dy int)              { l.rec(fmt.Sprintf("move %d,%d", dx, dy)) }
 func (l *LogInjector) MouseButton(b int, down bool)      { l.rec(fmt.Sprintf("btn %d %v", b, down)) }
 func (l *LogInjector) Wheel(d int, h bool)               { l.rec(fmt.Sprintf("wheel %d h=%v", d, h)) }
+func (l *LogInjector) Foreground() uintptr               { return 0 }
 func (l *LogInjector) SetIME(open, kana bool)            { l.rec(fmt.Sprintf("ime %v", open)) }
 func (l *LogInjector) IMEOpen() bool                     { return l.IME }

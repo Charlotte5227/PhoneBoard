@@ -15,12 +15,24 @@ const (
 	modLock          // 固定
 )
 
+// KeyEvent は入力した1キー分の情報。
+type KeyEvent struct {
+	Mods   []uint16
+	VK     uint16
+	Name   string // 送ったキー名（A, SPACE, F1, ...）
+	Label  string // 表示用
+	Letter rune   // 英字なら小文字
+	Index  int    // キー配置の何番目のキーか（音の高さ・表示用）
+	Fn     bool   // Fn と一緒に押した
+	Warn   string // 注意: "" / romaji（ローマ字として変な子音の並び）/ alpha（英字のまま日本語を打っていそう）
+}
+
 // KbdOut はキーボードエンジンからアプリへの出力。
 type KbdOut interface {
-	KeyPress(mods []uint16, vk uint16, label string, letter rune) // キー入力（修飾キー付き）
-	ModKey(vk uint16, down bool)                                  // 同時押し方式: 修飾キーの押下/解放
-	Action(a string)                                              // {MOUSE} など
-	Feedback(kind string)                                         // hover / commit / mod / cancel（振動・音）
+	KeyPress(ev KeyEvent)        // キー入力（修飾キー付き）
+	ModKey(vk uint16, down bool) // 同時押し方式: 修飾キーの押下/解放
+	Action(a string)             // {MOUSE} など
+	Feedback(kind string)        // hover / commit / mod / cancel（振動・音）
 }
 
 type finger struct {
@@ -54,20 +66,24 @@ type calibSample struct {
 
 // Kbd は横向きの物理配列キーボードの判定を行う。PC側で判定するので、PC画面の表示と完全に一致する。
 type Kbd struct {
-	cfg     KeyboardCfg
-	board   *Board
-	out     KbdOut
-	fingers map[int]*finger
-	state   map[string]modState // ワンショット方式の状態
-	held    map[string]int      // 修飾キーを押さえている指の数
-	used    map[string]bool     // 押さえている間に他のキーを打った（＝同時押しとして使った）
-	ctx     []rune              // 入力補助用: 今の単語
-	IME     func() bool         // IMEがONか
-	flash   map[int]int64       // 入力したキー → 時刻（表示用）
-	Calib   Calib               // タッチ位置の自動補正
-	pending *calibSample        // 直前に入力したキーのずれ（次がBSでなければ学習に使う）
-	Learned func()              // 学習した時（保存用）
+	cfg      KeyboardCfg
+	board    *Board
+	out      KbdOut
+	fingers  map[int]*finger
+	state    map[string]modState // ワンショット方式の状態
+	held     map[string]int      // 修飾キーを押さえている指の数
+	used     map[string]bool     // 押さえている間に他のキーを打った（＝同時押しとして使った）
+	ctx      []rune              // 入力補助用: 今の単語
+	IME      func() bool         // IMEがONか
+	flash    map[int]int64       // 入力したキー → 時刻（表示用）
+	Calib    Calib               // タッチ位置の自動補正
+	pending  *calibSample        // 直前に入力したキーのずれ（次がBSでなければ学習に使う）
+	Learned  func()              // 学習した時（保存用）
+	jaWarned bool                // 「英字のまま日本語」の注意を一度鳴らした（以後は鳴らさない）
 }
+
+// ResetJaWarn は「英字のまま日本語」の注意をまた鳴らせるようにする（IMEをONにした・アプリを切り替えた時）。
+func (k *Kbd) ResetJaWarn() { k.jaWarned = false }
 
 func NewKbd(out KbdOut) *Kbd {
 	return &Kbd{out: out, fingers: map[int]*finger{}, state: map[string]modState{}, held: map[string]int{},
@@ -351,7 +367,12 @@ func (k *Kbd) commit(i int) {
 	} else if k.modActive("shift") && key.Shift != "" && !fn {
 		label = key.Shift
 	}
-	k.out.KeyPress(mods, vk, label, letter)
+	onlyShift := len(mods) == 0 || (len(mods) == 1 && mods[0] == modVK["shift"])
+	ev := KeyEvent{Mods: mods, VK: vk, Name: name, Label: label, Letter: letter, Index: i, Fn: fn && key.FnKey != ""}
+	if letter != 0 && onlyShift {
+		ev.Warn = k.checkWarn(string(k.ctx), letter, k.modActive("shift"))
+	}
+	k.out.KeyPress(ev)
 	k.flash[i] = 1
 	// ワンショットの修飾キーは1回使ったら解除
 	for m, s := range k.state {
@@ -360,7 +381,6 @@ func (k *Kbd) commit(i int) {
 		}
 	}
 	// 入力補助の文脈
-	onlyShift := len(mods) == 0 || (len(mods) == 1 && mods[0] == modVK["shift"])
 	switch {
 	case letter != 0 && onlyShift:
 		k.ctx = append(k.ctx, letter)
@@ -372,6 +392,42 @@ func (k *Kbd) commit(i int) {
 	default:
 		k.ctx = k.ctx[:0]
 	}
+}
+
+// checkWarn は注意音を鳴らすべきかを判定する（ctx はこの文字の前までの単語）。
+func (k *Kbd) checkWarn(ctx string, ch rune, shift bool) string {
+	ime := k.IME != nil && k.IME()
+	if ime {
+		// 日本語入力中: ローマ字として成り立たない子音の並び（例: kt, sd）
+		if k.cfg.Warn && !shift && !isVowel(ch) && romajiPending(ctx) != "" && romajiPrior(ctx, ch) < 0.1 {
+			return "romaji"
+		}
+		return ""
+	}
+	// 英字入力中: 辞書に無く、ローマ字としては自然な並びが続いた → 日本語のつもりかも（一度だけ）
+	if !k.cfg.WarnAlpha || k.jaWarned {
+		return ""
+	}
+	word := ctx + string(ch)
+	if len(word) >= 6 && romajiLike(word) && freqPrefix(word) == 0 {
+		k.jaWarned = true
+		return "alpha"
+	}
+	return ""
+}
+
+// romajiLike は文字列全体がローマ字として自然に読めるか。
+func romajiLike(w string) bool {
+	vowels := 0
+	for i := 0; i < len(w); i++ {
+		if romajiPrior(w[:i], rune(w[i])) < 0.3 {
+			return false
+		}
+		if isVowel(rune(w[i])) {
+			vowels++
+		}
+	}
+	return vowels*3 >= len(w)
 }
 
 // ResetContext は単語の区切り（クリックやマウス操作など）で呼ぶ。
