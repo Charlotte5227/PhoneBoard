@@ -466,3 +466,40 @@ func TestRomaToMora(t *testing.T) {
 		}
 	}
 }
+
+// 「かため」→ BS →「な」で、IMEの画面は「かたな」。m の後に n が来たと誤判定しないこと。
+func TestCompositionBackspace(t *testing.T) {
+	r := newKrig(func(c *KeyboardCfg) { c.Assist = false; c.AutoCalib = false })
+	r.ime = true
+	r.typeWord("katame")
+	r.tap(1, "BS", 0, 0)
+	r.typeWord("na")
+	if len(r.o.warns) != 0 {
+		t.Fatalf("warned: %v", r.o.warns)
+	}
+	if got := string(r.k.comp.kana) + r.k.comp.pend; got != "かたな" {
+		t.Fatalf("composition %q", got)
+	}
+	// 途中のローマ字（k）は1文字だけ消える: 「かk」→ BS →「か」→ t a →「かた」
+	r.tap(1, "Space", 0, 0)
+	r.typeWord("kak")
+	r.tap(1, "BS", 0, 0)
+	r.typeWord("ta")
+	if got := string(r.k.comp.kana) + r.k.comp.pend; got != "かた" || len(r.o.warns) != 0 {
+		t.Fatalf("composition %q warns %v", got, r.o.warns)
+	}
+	// きゃ → BS → き（ゃ だけ消える）→ る → 「きる」
+	r.tap(1, "Space", 0, 0)
+	r.typeWord("kya")
+	r.tap(1, "BS", 0, 0)
+	r.typeWord("ru")
+	if got := string(r.k.comp.kana); got != "きる" {
+		t.Fatalf("composition %q", got)
+	}
+	// 本当に変な並びは引き続き注意: かt → k
+	r.tap(1, "Space", 0, 0)
+	r.typeWord("katk")
+	if strings.Join(r.o.warns, ",") != "k:romaji" {
+		t.Fatalf("warns %v", r.o.warns)
+	}
+}

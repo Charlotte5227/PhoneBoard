@@ -147,20 +147,83 @@ func romaToMora(s string) (moras []string, pending string) {
 	return moras, ""
 }
 
-// kanaOdd は、ローマ字列 before に ch を足した時に新しくそろった音の続き方が、
-// 日本語としてどれくらい珍しいかを返す（最も珍しい続き方の確率。新しい音が無ければ 1）。
-func kanaOdd(before string, ch byte) float64 {
-	m0, _ := romaToMora(before)
-	m1, _ := romaToMora(before + string(ch))
+// composer は日本語入力中の「変換前の文字」を、IMEの画面表示と同じ形で再現する。
+// （かな ＋ まだかなになっていないローマ字）。BS もIMEと同じく、
+// 途中のローマ字があればその1文字、無ければかなを1文字消す。
+// ※打ったキーの並びのままだと「かため→BS→な」が katamna になり、m の後に n が来たと誤判定してしまう。
+type composer struct {
+	kana []rune // かなになった部分（変換できない文字は '?'）
+	pend string // まだかなになっていないローマ字（k, ky, sh, n など）
+}
+
+func (c *composer) reset() {
+	c.kana = c.kana[:0]
+	c.pend = ""
+}
+
+func (c *composer) empty() bool { return len(c.kana) == 0 && c.pend == "" }
+
+func isSmallKana(r rune) bool { return strings.ContainsRune("ゃゅょぁぃぅぇぉゎ", r) }
+
+// lastMora は最後の1音（きゃ などは2文字で1音）。
+func lastMora(k []rune) string {
+	n := len(k)
+	if n == 0 {
+		return ""
+	}
+	if n >= 2 && isSmallKana(k[n-1]) {
+		return string(k[n-2:])
+	}
+	return string(k[n-1:])
+}
+
+// next は ch を打った時に新しくそろう音と、その後の途中のローマ字を返す（状態は変えない）。
+func (c *composer) next(ch byte) ([]string, string) {
+	return romaToMora(c.pend + string(ch))
+}
+
+func (c *composer) feed(ch byte) {
+	moras, rest := c.next(ch)
+	for _, m := range moras {
+		c.kana = append(c.kana, []rune(m)...)
+	}
+	c.pend = rest
+	if len(c.kana) > 200 {
+		c.reset()
+	}
+}
+
+// dash は「ー」。途中の n は「ん」にしてから伸ばす。
+func (c *composer) dash() {
+	if c.pend == "n" {
+		c.kana = append(c.kana, 'ん')
+	}
+	c.pend = ""
+	c.kana = append(c.kana, 'ー')
+}
+
+func (c *composer) backspace() {
+	if c.pend != "" {
+		c.pend = c.pend[:len(c.pend)-1]
+		return
+	}
+	if n := len(c.kana); n > 0 {
+		c.kana = c.kana[:n-1]
+	}
+}
+
+// oddness は ch を打った時に新しくそろう音の続き方のうち、最も珍しいものの確率（無ければ 1）。
+func (c *composer) oddness(ch byte) float64 {
+	moras, _ := c.next(ch)
+	prev := lastMora(c.kana)
 	worst := 1.0
-	for i := len(m0); i < len(m1); i++ {
-		if i == 0 || m1[i] == "?" || m1[i-1] == "?" {
-			continue
+	for _, m := range moras {
+		if m != "?" && prev != "" && !strings.ContainsRune(prev, '?') {
+			if p := kanaNext(prev, m); p < worst {
+				worst = p
+			}
 		}
-		// 確定前の n（ん/な行）は判断を保留しているので、直前が変わっていることもある
-		if p := kanaNext(m1[i-1], m1[i]); p < worst {
-			worst = p
-		}
+		prev = m
 	}
 	return worst
 }

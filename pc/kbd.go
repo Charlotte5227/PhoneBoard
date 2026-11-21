@@ -80,7 +80,7 @@ type Kbd struct {
 	pending  *calibSample        // 直前に入力したキーのずれ（次がBSでなければ学習に使う）
 	Learned  func()              // 学習した時（保存用）
 	jaWarned bool                // 「英字のまま日本語」の注意を一度鳴らした（以後は鳴らさない）
-	kbuf     string              // 日本語入力中のローマ字（区切りまで。ー を含む）
+	comp     composer            // 日本語入力中の変換前の文字（IMEの表示を再現）
 	kanaWarn bool                // この区切りの中で「不自然なかな」の注意を鳴らした
 }
 
@@ -160,6 +160,9 @@ func (k *Kbd) Hit(x, y float64) int {
 	}
 	ime := k.IME != nil && k.IME()
 	ctx := string(k.ctx)
+	if ime {
+		ctx = k.comp.pend // 日本語入力中は、まだかなになっていないローマ字が文脈
+	}
 	best, bestScore := k0, -1.0
 	const sigma = 0.45
 	for i := range k.board.Keys {
@@ -402,11 +405,13 @@ func (k *Kbd) checkWarn(ctx string, ch rune, shift bool) string {
 	ime := k.IME != nil && k.IME()
 	if ime {
 		// 日本語入力中: ローマ字として成り立たない子音の並び（例: kt, sd）
-		if k.cfg.Warn && !shift && !isVowel(ch) && romajiPending(ctx) != "" && romajiPrior(ctx, ch) < 0.1 {
+		// （打ったキーの並びではなく、IMEの画面と同じ「まだかなになっていない部分」で判定する）
+		pend := k.comp.pend
+		if k.cfg.Warn && !shift && !isVowel(ch) && romajiPending(pend) != "" && romajiPrior(pend, ch) < 0.1 {
 			return "romaji"
 		}
 		// 日本語として極端に珍しいかなの並び（区切りまでに1回だけ）
-		if th := kanaThreshold(k.cfg.WarnKana); th > 0 && !shift && !k.kanaWarn && kanaOdd(k.kbuf, byte(ch)) < th {
+		if th := kanaThreshold(k.cfg.WarnKana); th > 0 && !shift && !k.kanaWarn && k.comp.oddness(byte(ch)) < th {
 			k.kanaWarn = true
 			return "kana"
 		}
@@ -437,25 +442,25 @@ func kanaThreshold(level string) float64 {
 	return 3e-4
 }
 
-// trackKana は日本語入力中のローマ字を区切りまで覚えておく（不自然なかなの判定用）。
+// trackKana は日本語入力中の変換前の文字を、IMEの表示と同じように更新する。
 func (k *Kbd) trackKana(ev KeyEvent, onlyShift bool) {
 	ime := k.IME != nil && k.IME()
 	switch {
 	case !ime:
-		k.kbuf, k.kanaWarn = "", false
+		k.comp.reset()
+		k.kanaWarn = false
 	case ev.Letter != 0 && onlyShift && !k.modActive("shift"):
-		k.kbuf += string(ev.Letter)
+		k.comp.feed(byte(ev.Letter))
 	case ev.Name == "MINUS" && len(ev.Mods) == 0:
-		k.kbuf += "-"
+		k.comp.dash()
 	case ev.Name == "BS" && len(ev.Mods) == 0:
-		if n := len(k.kbuf); n > 0 {
-			k.kbuf = k.kbuf[:n-1]
+		k.comp.backspace()
+		if k.comp.empty() {
+			k.kanaWarn = false // 全部消した＝打ち直し
 		}
-	default: // Space（変換）・Enter・句読点など＝区切り
-		k.kbuf, k.kanaWarn = "", false
-	}
-	if len(k.kbuf) > 80 {
-		k.kbuf = ""
+	default: // Space（変換）・Enter・句読点・矢印など＝区切り
+		k.comp.reset()
+		k.kanaWarn = false
 	}
 }
 
