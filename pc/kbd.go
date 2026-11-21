@@ -80,6 +80,8 @@ type Kbd struct {
 	pending  *calibSample        // 直前に入力したキーのずれ（次がBSでなければ学習に使う）
 	Learned  func()              // 学習した時（保存用）
 	jaWarned bool                // 「英字のまま日本語」の注意を一度鳴らした（以後は鳴らさない）
+	kbuf     string              // 日本語入力中のローマ字（区切りまで。ー を含む）
+	kanaWarn bool                // この区切りの中で「不自然なかな」の注意を鳴らした
 }
 
 // ResetJaWarn は「英字のまま日本語」の注意をまた鳴らせるようにする（IMEをONにした・アプリを切り替えた時）。
@@ -372,6 +374,7 @@ func (k *Kbd) commit(i int) {
 	if letter != 0 && onlyShift {
 		ev.Warn = k.checkWarn(string(k.ctx), letter, k.modActive("shift"))
 	}
+	k.trackKana(ev, onlyShift)
 	k.out.KeyPress(ev)
 	k.flash[i] = 1
 	// ワンショットの修飾キーは1回使ったら解除
@@ -402,6 +405,11 @@ func (k *Kbd) checkWarn(ctx string, ch rune, shift bool) string {
 		if k.cfg.Warn && !shift && !isVowel(ch) && romajiPending(ctx) != "" && romajiPrior(ctx, ch) < 0.1 {
 			return "romaji"
 		}
+		// 日本語として極端に珍しいかなの並び（区切りまでに1回だけ）
+		if th := kanaThreshold(k.cfg.WarnKana); th > 0 && !shift && !k.kanaWarn && kanaOdd(k.kbuf, byte(ch)) < th {
+			k.kanaWarn = true
+			return "kana"
+		}
 		return ""
 	}
 	// 英字入力中: 辞書に無く、ローマ字としては自然な並びが続いた → 日本語のつもりかも（一度だけ）
@@ -414,6 +422,41 @@ func (k *Kbd) checkWarn(ctx string, ch rune, shift bool) string {
 		return "alpha"
 	}
 	return ""
+}
+
+// kanaThreshold は「不自然なかな」の感度ごとの基準（続き方の確率がこれより低いと注意）。
+func kanaThreshold(level string) float64 {
+	switch level {
+	case "low":
+		return 8e-5
+	case "high":
+		return 1.2e-3
+	case "off":
+		return 0
+	}
+	return 3e-4
+}
+
+// trackKana は日本語入力中のローマ字を区切りまで覚えておく（不自然なかなの判定用）。
+func (k *Kbd) trackKana(ev KeyEvent, onlyShift bool) {
+	ime := k.IME != nil && k.IME()
+	switch {
+	case !ime:
+		k.kbuf, k.kanaWarn = "", false
+	case ev.Letter != 0 && onlyShift && !k.modActive("shift"):
+		k.kbuf += string(ev.Letter)
+	case ev.Name == "MINUS" && len(ev.Mods) == 0:
+		k.kbuf += "-"
+	case ev.Name == "BS" && len(ev.Mods) == 0:
+		if n := len(k.kbuf); n > 0 {
+			k.kbuf = k.kbuf[:n-1]
+		}
+	default: // Space（変換）・Enter・句読点など＝区切り
+		k.kbuf, k.kanaWarn = "", false
+	}
+	if len(k.kbuf) > 80 {
+		k.kbuf = ""
+	}
 }
 
 // romajiLike は文字列全体がローマ字として自然に読めるか。

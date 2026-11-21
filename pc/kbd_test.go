@@ -430,3 +430,39 @@ func TestSoundMixer(t *testing.T) {
 		t.Fatal("wav")
 	}
 }
+
+func TestWarnKana(t *testing.T) {
+	r := newKrig(func(c *KeyboardCfg) { c.Assist = false; c.AutoCalib = false })
+	r.ime = true
+	for _, w := range []string{"watashihasushigatabetaidesu", "kyouhaiitenkidesune", "arigatougozaimasu", "otsukaresamadeshita", "konnnichiha"} {
+		r.typeWord(w)
+		r.tap(1, "Space", 0, 0)
+	}
+	if len(r.o.warns) != 0 {
+		t.Fatalf("normal warned: %v", r.o.warns)
+	}
+	// 明らかに変な並び（たゔぇ）→ 1回だけ
+	r.typeWord("tavetaitavetai")
+	if strings.Join(r.o.warns, ",") != "e:kana" {
+		t.Fatalf("warns: %v", r.o.warns)
+	}
+	// 区切り（Space）の後はまた鳴る
+	r.o.warns = nil
+	r.tap(1, "Space", 0, 0)
+	r.typeWord("kyuouha")
+	if strings.Join(r.o.warns, ",") != "o:kana" {
+		t.Fatalf("after space: %v", r.o.warns)
+	}
+}
+
+func TestRomaToMora(t *testing.T) {
+	for in, want := range map[string]string{
+		"konnnichiha": "こ,ん,に,ち,は", "kitte": "き,っ,て", "shinkansen": "し,ん,か,ん,せ", "kyouha": "きょ,う,は",
+		"tsukue": "つ,く,え", "ge-mu": "げ,ー,む", "fairu": "ふぁ,い,る", "xtu": "っ", "dhi": "でぃ",
+	} {
+		m, p := romaToMora(in)
+		if got := strings.Join(m, ","); got != want {
+			t.Errorf("%s: %s (pending %q)", in, got, p)
+		}
+	}
+}

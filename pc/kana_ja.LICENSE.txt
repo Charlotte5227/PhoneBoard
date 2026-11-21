@@ -1,0 +1,9 @@
+kana_ja.txt.gz（かな1音ごとの続きやすさの統計）について
+
+wordfreq 3.1.1（Robyn Speer 他, https://github.com/rspeer/wordfreq）の日本語の単語頻度データ（large_ja、上位8万語）を、
+pykakasi 2.3.0（https://codeberg.org/miurahr/pykakasi）でひらがなの読みに直し、かな1音ごとの出現数と
+2音の続き方の数を頻度で重み付けして数えたものです（単語の境目の続き方は語末と語頭の分布から推定）。
+
+wordfreq のデータは Creative Commons Attribution-ShareAlike 4.0 で配布されています。
+  https://creativecommons.org/licenses/by-sa/4.0/
+このファイルも同じ CC BY-SA 4.0 で配布します。

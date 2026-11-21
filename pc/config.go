@@ -37,6 +37,7 @@ type KeyboardCfg struct {
 	KeyTones         bool    `json:"keyTones"`         // キーごとに音を変える（系統で音色・横位置で高さ）
 	Warn             bool    `json:"warn"`             // 日本語入力中、ローマ字として変な子音の並びで注意音
 	WarnAlpha        bool    `json:"warnAlpha"`        // 英字のまま日本語を打っていそうな時に注意音（一度だけ）
+	WarnKana         string  `json:"warnKana"`         // 日本語として不自然なかなの並びで注意音: off / low / mid / high
 	WarnVolume       int     `json:"warnVolume"`       // 注意音の大きさ
 	ClickSound       string  `json:"clickSound"`       // pc / phone / both / off
 	ClickVolume      int     `json:"clickVolume"`      // 0〜100
@@ -111,7 +112,7 @@ func DefaultConfig() *Config {
 			CommitOn: "release", ModMode: "sticky", Assist: true, AssistStrength: 0.8,
 			RepeatDelayMs: 450, RepeatIntervalMs: 60, ClickSound: "pc", ClickVolume: 60,
 			AutoCalib: true, SlipGuardMs: 50,
-			KeyTones: true, Warn: true, WarnAlpha: true, WarnVolume: 70,
+			KeyTones: true, Warn: true, WarnAlpha: true, WarnKana: "mid", WarnVolume: 70,
 		},
 		Haptic: HapticCfg{Enabled: true, HoverMs: 6, CommitMs: 14, ToggleMs: 35, Amp: 200},
 		Overlay: OverlayCfg{
@@ -197,6 +198,9 @@ func (c *Config) Normalize() {
 	}
 	if o.MiniAnchor == "" {
 		o.MiniAnchor = "bottom-right"
+	}
+	if w := c.Keyboard.WarnKana; w != "off" && w != "low" && w != "high" {
+		c.Keyboard.WarnKana = "mid"
 	}
 	if c.Keyboard.WarnVolume < 0 || c.Keyboard.WarnVolume > 100 {
 		c.Keyboard.WarnVolume = d.Keyboard.WarnVolume

@@ -21,7 +21,8 @@ section.on{display:block}
 h3{font-size:15px;margin:18px 0 8px;color:var(--sub)}
 .grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(340px,1fr));gap:10px 26px}
 .row{display:flex;align-items:center;gap:10px;min-height:38px}
-.row label{flex:1}
+.row label{flex:1;min-width:45%}
+.row select{max-width:52%}
 .row input[type=range]{width:150px}
 .row .val{width:56px;text-align:right;color:var(--sub);font-variant-numeric:tabular-nums}
 input,select,textarea{background:var(--panel2);color:var(--text);border:1px solid var(--line);border-radius:7px;padding:5px 8px;font:inherit}
@@ -99,7 +100,7 @@ code{background:var(--panel2);padding:1px 5px;border-radius:4px}
     <button class="b" onclick="resetCalib()">タッチ位置の補正をリセット</button><span class="sub" id="calibInfo"></span></div>
   <h3>音で確かめる仕組み</h3>
   <p class="sub"><b>キーごとの音</b>: 母音（a i u e o）は明るい「ピッ」、子音などの英字は打鍵音、数字・記号は木の音、Space・Enter・BSは低い音、Esc・矢印などは「カチカチ」。さらに左のキーほど低く、右のキーほど高く鳴ります。<br>
-  <b>注意音（ポッポッ）</b>: 日本語入力中に「kt」のようなローマ字として成り立たない並びになった時と、英字入力のままローマ字の日本語らしきものを打ち始めた時（一度だけ。IMEをONにするか別のアプリに切り替えると、また鳴ります）。</p>
+  <b>注意音（ポッポッ）</b>: 日本語入力中に「kt」のようなローマ字として成り立たない並びになった時と、英字入力のままローマ字の日本語らしきものを打ち始めた時（一度だけ。IMEをONにするか別のアプリに切り替えると、また鳴ります）。さらに、日本語として極端に珍しいかなの並び（例:「たゔぇ」「きゅお」）になった時も、変換・確定・句読点までに1回だけ鳴ります（「わらし」のような、かなとしては自然な打ち間違いは拾えません）。</p>
   <h3>打ちミスを減らす仕組み</h3>
   <p class="sub"><b>タッチ位置の自動補正</b>: 「いつもキーの少し下を押している」などのクセを、左手側・右手側それぞれで打ちながら学習して補正します。打った直後にBSで消したキーは打ち間違いとみなして学習しません。<br>
   <b>離す瞬間のズレ</b>: 指を離す瞬間に指先が転がって隣のキーに乗っても、直前まで乗っていたキーを入力します。</p>
@@ -229,7 +230,8 @@ const SCHEMA={
   ["clickSound","クリック音・注意音","select",{pc:"PCで鳴らす",phone:"スマホで鳴らす",both:"両方",off:"鳴らさない"}],["clickVolume","クリック音の大きさ","range",0,100,1],
   ["keyTones","キーごとに音を変える（種類で音色・横位置で高さ）","bool"],
   ["warn","注意音: 日本語入力中にローマ字として変な子音の並び（例 kt）","bool"],
-  ["warnAlpha","注意音: 英字のまま日本語を打っていそうな時（一度だけ）","bool"],["warnVolume","注意音の大きさ","range",0,100,1]],
+  ["warnAlpha","注意音: 英字のまま日本語を打っていそうな時（一度だけ）","bool"],
+  ["warnKana","注意音: 日本語として不自然なかなの並び（区切りまで1回）","select",{off:"鳴らさない",low:"控えめ（極端なものだけ）",mid:"標準",high:"敏感（珍しい言葉でも鳴ることがある）"}],["warnVolume","注意音の大きさ","range",0,100,1]],
  mouse:[["sensitivity","カーソル速度","range",0.3,8,0.1],["accel","加速（速く動かすと大きく動く）","range",0,4,0.1],
   ["scrollSpeed","スクロール速度","range",0.2,5,0.1],["scrollInvert","スクロール方向を反転","bool"],["smoothScroll","なめらかスクロール","bool"],
   ["hScroll","横スクロールも行う","bool"],["momentum","スクロールの慣性（はじくと続けて流れる）","bool"],
