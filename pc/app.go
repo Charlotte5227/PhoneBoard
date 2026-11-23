@@ -536,7 +536,7 @@ func (a *App) sendCfgLocked() {
 		},
 		"kb":     map[string]any{"cols": b.Cols, "rows": b.Rows, "keys": keys},
 		"game":   map[string]any{"zones": a.lay.GameZones},
-		"dir":    map[string]any{"flickDp": a.cfg.Dir.FlickDp, "longDp": a.cfg.Dir.LongDp, "bendDp": a.cfg.Dir.BendDp},
+		"dir":    map[string]any{"flickDp": a.cfg.Dir.FlickDp, "bendDp": a.cfg.Dir.BendDp},
 		"haptic": a.cfg.Haptic.Enabled,
 	})
 	a.sendStateLocked()
@@ -627,12 +627,12 @@ func (a *App) Handle(s Sender, m *Msg) {
 		a.refreshOverlayLocked()
 	case "df": // 方向入力: はじき1回
 		if a.mode == "dir" {
-			a.dir.Flick(m.S, m.N, m.Z != 0, m.B == "bend")
+			a.dir.Flick(m.S, m.N, m.Z != 0, m.B)
 			a.vib("commit")
 		}
 	case "dp": // 方向入力: 切り替え口に入った・曲げた（音で知らせる）
 		if a.mode == "dir" {
-			a.dir.Preview(m.S, m.N, m.B == "bend", m.Z != 0)
+			a.dir.Preview(m.S, m.N, m.B)
 		}
 	case "ds": // 英字の一筆書き
 		if a.mode == "dir" {

@@ -112,7 +112,7 @@ code{background:var(--panel2);padding:1px 5px;border-radius:4px}
 <section data-tab="方向入力">
   <div class="grid" id="f-dir"></div>
   <p class="sub"><b>方向入力</b>は画面を見ずに打つための入力方法です。左右どちらの半分も、触れる場所は自由で、はじいた方向だけで決まります。</p>
-  <p class="sub"><b>日本語</b>: 左の親指で行（↖か ↑さ ↗た ←な トンは →ま ↙や ↓ら ↘わ）、右の親指で段（トンあ ←い ↑う →え ↓お）。右の ↖ん ↗変換 ↙濁点・小文字 ↘数字へ（そのまま左へ引くと英字へ）。右を長く引く: ←削除 ↓確定 →Tab（長さを超えると音が鳴り、離す前に戻せば普通の い・お）。<br>
+  <p class="sub"><b>日本語</b>: 左の親指で行（↖か ↑さ ↗た ←な トンは →ま ↙や ↓ら ↘わ）、右の親指で段（トンあ ←い ↑う →え ↓お）。右の ↖ん ↗変換 ↙濁点・小文字 ↘数字へ（そのまま左へ引くと英字へ）。右 ↖（ん）からそのまま曲げる: →削除 ↓確定 ↑Tab（曲げると音が鳴り、離す前に戻せば普通の ん）。<br>
   行を選んでから右 ↖/↙ で記号（か「」 さ【】 た…： な〜 は？！ ま（） や→← ら♪ わｗ（笑））。わ行の い・う・え は 、。・、や行の い は ー、え は 空白。<br>
   変換中: 右 ↓次の候補 ↑前の候補 →確定 ←取り消し、左 ←→ で区切りを動かす。</p>
   <p class="sub"><b>数字</b>: 左の親指はテンキー（トン5、↖1 ↑2 ↗3 …）、右の親指はトン0、↑. ↓, ←- →+ ↖/ ↗: ↙%。右 ↘ で日本語へ。<br>
@@ -263,9 +263,9 @@ const SCHEMA={
   ["opacity","キーボード表示の不透明度(%)","range",20,100,1],["showHints","キーにShift/Fnの文字も小さく表示","bool"],["showHistory","入力履歴・IMEの状態を表示","bool"],
   ["miniMap","マウス操作中、触れている位置を小窓で表示","bool"],["miniWidth","小窓の幅(px)","range",120,600,5],
   ["miniAnchor","小窓の位置","select",{"bottom-right":"右下","bottom-left":"左下","top-right":"右上","top-left":"左上"}],["toast","モード切替などを画面中央に表示","bool"]],
- dir:[["enabled","切り替えボタン・{TOGGLE}で方向入力も順番に出す（キーボードの次）","bool"],["flickDp","これより短い動きは「トン」（dp）","range",6,40,1],["longDp","これより長く引いて離すと「長く引く」（削除・確定）（dp）","range",60,400,10],["bendDp","↘から左へこれだけ引くと英字（dp）","range",10,120,5]],
+ dir:[["enabled","切り替えボタン・{TOGGLE}で方向入力も順番に出す（キーボードの次）","bool"],["flickDp","これより短い動きは「トン」（dp）","range",6,40,1],["bendDp","曲げの判定の長さ（↖から→↓↑、↘から←）（dp）","range",10,120,5]],
  game:[["enabled","切り替えボタン・{TOGGLE}でゲーム画面も順番に出す（マウス→キーボード→ゲーム）","bool"],["lookSens","視点パッドの速さ","range",0.2,8,0.1]],
- buttons:[["mouseVolUp","マウス中: 音量↑","text"],["mouseVolDown","マウス中: 音量↓","text"],["kbVolUp","キーボード中: 音量↑","text"],["kbVolDown","キーボード中: 音量↓","text"]]
+ buttons:[["mouseVolUp","マウス中: 音量↑","text"],["mouseVolDown","マウス中: 音量↓","text"],["kbVolUp","キーボード・方向入力中: 音量↑","text"],["kbVolDown","キーボード・方向入力中: 音量↓","text"]]
 };
 
 let cfg=null, lay=null, status={phone:{wdp:915,hdp:412}};
@@ -299,7 +299,7 @@ function buildForm(sec,key){
     else if(type=='select'){inp=document.createElement('select');for(const [v,t] of Object.entries(a)){const o=document.createElement('option');o.value=v;o.textContent=t;inp.appendChild(o)}
       inp.value=obj[k];inp.onchange=()=>{obj[k]=inp.value;saveCfg()}}
     else if(type=='int'){inp=document.createElement('input');inp.type='number';inp.value=obj[k];inp.style.width='90px';inp.onchange=()=>{obj[k]=parseInt(inp.value)||0;saveCfg()}}
-    else {inp=document.createElement('input');inp.setAttribute('list','acts');inp.value=obj[k];inp.onchange=()=>{obj[k]=inp.value.trim();saveCfg()}}
+    else {inp=document.createElement('input');inp.setAttribute('list','acts');inp.value=obj[k];inp.oninput=inp.onchange=()=>{obj[k]=inp.value.trim();saveCfg()}}
     row.appendChild(inp); box.appendChild(row);
   }
 }

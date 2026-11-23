@@ -38,14 +38,17 @@ class DirPad {
         float seX;                   // ↘ に入ってからの一番右（px）
         float len;                   // なぞった長さ（dp）
         boolean others, holder;      // 英字: 他の指が触れていた（=大文字）/ 大文字用に押さえている指
-        int longHint = -1;           // 「長く引く」を知らせた方向
+        boolean ulIn, ulFrozen;      // ↖ に入った / そこから曲げた（基準点を固定）
+        float ax, ay;                // ↖ の行き着いた点（曲げの基準）
+        float px, py;                // 直前の位置
+        String ulKind;               // ↖ から曲げた操作: bs / enter / tab
         final List<float[]> pts = new ArrayList<float[]>();
     }
 
     private final Out out;
     private final float dens;
     String sub = "ja";
-    float flickDp = 16, longDp = 150, bendDp = 30;
+    float flickDp = 16, bendDp = 30;
     private final SparseArray<F> fs = new SparseArray<F>();
     private long lastTapT0 = -1, lastTapT1 = -1;
     private final Paint paint = new Paint(Paint.ANTI_ALIAS_FLAG);
@@ -60,7 +63,6 @@ class DirPad {
     void applyCfg(JSONObject d) {
         if (d == null) return;
         flickDp = (float) d.optDouble("flickDp", flickDp);
-        longDp = (float) d.optDouble("longDp", longDp);
         bendDp = (float) d.optDouble("bendDp", bendDp);
     }
 
@@ -84,8 +86,8 @@ class DirPad {
     void down(int id, float x, float y, int width) {
         F f = new F();
         f.id = id;
-        f.x0 = f.x = f.farX = x;
-        f.y0 = f.y = f.farY = y;
+        f.x0 = f.x = f.farX = f.px = x;
+        f.y0 = f.y = f.farY = f.py = y;
         f.t0 = SystemClock.uptimeMillis();
         f.left = x < width / 2f;
         f.pts.add(new float[]{x / dens, y / dens});
@@ -118,16 +120,37 @@ class DirPad {
         // 右の親指: ↘（切り替え口）に入った → 音で知らせる。そこから左へ引いたら英字
         if (!f.left) {
             int dir = d >= flickDp ? dirOf(x - f.x0, y - f.y0) : 0;
-            // ← / ↓ / → を「長く引く」の長さまで引いた → 音で知らせる（離す前に戻せば普通の文字）
-            if (d >= longDp && (dir == 7 || dir == 5 || dir == 3) && f.longHint != dir) {
-                f.longHint = dir;
-                previewLong(dir);
-                out.vibrate(20, 220);
-            } else if (d < longDp * 0.85f && f.longHint >= 0) {
-                f.longHint = -1;
-                out.vibrate(8, 120);
+            // ↖（ん）から指を離さずに → 削除 / ↓ 確定 / ↑ Tab
+            if (!f.ulIn && !f.seIn && dir == 8) {
+                f.ulIn = true;
+                f.ax = x;
+                f.ay = y;
+            } else if (f.ulIn) {
+                float sx = x - f.px, sy = y - f.py;
+                // ↖ へ進んでいる間は基準点もついていく（曲げた後は固定）
+                if (!f.ulFrozen && Math.hypot(sx, sy) / dens > 0.5f && dirOf(sx, sy) == 8) {
+                    f.ax = x;
+                    f.ay = y;
+                }
+                float vx = (x - f.ax) / dens, vy = (y - f.ay) / dens;
+                String k = null;
+                if (Math.hypot(vx, vy) >= bendDp) {
+                    int vd = dirOf(vx, vy);
+                    k = vd == 3 ? "bs" : vd == 5 ? "enter" : vd == 1 ? "tab" : null;
+                }
+                if (k != null) f.ulFrozen = true;
+                boolean changed = k == null ? f.ulKind != null : !k.equals(f.ulKind);
+                if (changed) {
+                    f.ulKind = k;
+                    if (k != null) {
+                        previewBend(k);
+                        out.vibrate(20, 220);
+                    } else {
+                        out.vibrate(8, 120); // 戻した → 取り消し
+                    }
+                }
             }
-            if (!f.seIn && dir == 4) {
+            if (!f.seIn && !f.ulIn && dir == 4) {
                 f.seIn = true;
                 f.seX = x;
                 preview(4, false);
@@ -142,6 +165,8 @@ class DirPad {
                 }
             }
         }
+        f.px = x;
+        f.py = y;
     }
 
     void up(int id, float x, float y) {
@@ -156,14 +181,17 @@ class DirPad {
         }
         int dir;
         boolean lng = false;
+        String kind = null;
         if (f.bend) {
             dir = 4;
+            kind = "bend";
+        } else if (f.ulKind != null) {
+            dir = 8;
+            kind = f.ulKind;
         } else if (f.maxD < flickDp) {
             dir = 0;
         } else {
             dir = dirOf(f.farX - f.x0, f.farY - f.y0);
-            // 離した位置が十分遠い時だけ「長く引く」（引きすぎたら戻して離せば普通のはじき）
-            lng = Math.hypot(f.x - f.x0, f.y - f.y0) / dens >= longDp;
         }
         try {
             JSONObject o = new JSONObject();
@@ -171,7 +199,7 @@ class DirPad {
             o.put("s", f.left ? "L" : "R");
             o.put("n", dir);
             o.put("z", lng ? 1 : 0);
-            if (f.bend) o.put("b", "bend");
+            if (kind != null) o.put("b", kind);
             out.send(o);
         } catch (Exception ignored) {
         }
@@ -229,13 +257,13 @@ class DirPad {
         }
     }
 
-    private void previewLong(int dir) {
+    private void previewBend(String kind) {
         try {
             JSONObject o = new JSONObject();
             o.put("t", "dp");
             o.put("s", "R");
-            o.put("n", dir);
-            o.put("z", 1);
+            o.put("n", 8);
+            o.put("b", kind);
             out.send(o);
         } catch (Exception ignored) {
         }

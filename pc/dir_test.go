@@ -44,8 +44,8 @@ func newDirT(t *testing.T) (*Dir, *dirRec) {
 
 func TestDirJapanese(t *testing.T) {
 	d, rec := newDirT(t)
-	L := func(dir int) { d.Flick("L", dir, false, false) }
-	R := func(dir int) { d.Flick("R", dir, false, false) }
+	L := func(dir int) { d.Flick("L", dir, false, "") }
+	R := func(dir int) { d.Flick("R", dir, false, "") }
 	// せ = さ行(↑) + え(→)、 あ = 右トン、 ん = 右↖
 	L(dUp)
 	R(dRight)
@@ -96,8 +96,8 @@ func TestDirJapanese(t *testing.T) {
 
 func TestDirConvert(t *testing.T) {
 	d, rec := newDirT(t)
-	L := func(dir int) { d.Flick("L", dir, false, false) }
-	R := func(dir int) { d.Flick("R", dir, false, false) }
+	L := func(dir int) { d.Flick("L", dir, false, "") }
+	R := func(dir int) { d.Flick("R", dir, false, "") }
 	R(dUR) // 何も打っていない → 注意音
 	if got := rec.take(); got != "!warn" {
 		t.Fatalf("empty convert: %s", got)
@@ -129,10 +129,10 @@ func TestDirConvert(t *testing.T) {
 	if got := rec.take(); got != "<ENTER>,<SPACE>" {
 		t.Fatalf("space: %s", got)
 	}
-	// 長く引く: ← 削除 / ↓ 確定
-	d.Flick("R", dLeft, true, false)
-	d.Flick("R", dDown, true, false)
-	d.Flick("R", dRight, true, false)
+	// ↖（ん）から曲げる: → 削除 / ↓ 確定 / ↑ Tab
+	d.Flick("R", dUL, false, "bs")
+	d.Flick("R", dUL, false, "enter")
+	d.Flick("R", dUL, false, "tab")
 	if got := rec.take(); got != "<BS>,<ENTER>,<TAB>" {
 		t.Fatalf("long: %s", got)
 	}
@@ -140,28 +140,32 @@ func TestDirConvert(t *testing.T) {
 
 func TestDirSwitch(t *testing.T) {
 	d, rec := newDirT(t)
-	d.Flick("R", dDR, false, false)
+	d.Flick("R", dDR, false, "")
 	if got := rec.take(); got != "ime:false,sub:num" {
 		t.Fatalf("to num: %s", got)
 	}
 	for _, v := range []int{dUL, dUp, dUR, dLeft, dTap, dRight, dDL, dDown, dDR} {
-		d.Flick("L", v, false, false)
+		d.Flick("L", v, false, "")
 	}
-	d.Flick("R", dTap, false, false)
-	d.Flick("R", dUp, false, false)
-	d.Flick("R", dDL, false, false)
+	d.Flick("R", dTap, false, "")
+	d.Flick("R", dUp, false, "")
+	d.Flick("R", dDL, false, "")
 	if got := rec.take(); got != "1,2,3,4,5,6,7,8,9,0,.,%" {
 		t.Fatalf("digits: %s", got)
 	}
-	d.Flick("R", dDR, false, false)
+	d.Flick("R", dUL, false, "bs") // 数字でも ↖ から曲げて削除
+	if got := rec.take(); got != "<BS>" {
+		t.Fatalf("num bs: %s", got)
+	}
+	d.Flick("R", dDR, false, "")
 	if got := rec.take(); got != "ime:true,sub:ja" {
 		t.Fatalf("back: %s", got)
 	}
-	d.Flick("R", dDR, false, true) // ↘ からそのまま左 → 英字
+	d.Flick("R", dDR, false, "bend") // ↘ からそのまま左 → 英字
 	if got := rec.take(); got != "ime:false,sub:en" {
 		t.Fatalf("to en: %s", got)
 	}
-	d.Flick("L", dUp, false, false) // 英字でははじきは無視
+	d.Flick("L", dUp, false, "") // 英字でははじきは無視
 	d.TwoTap()
 	if got := rec.take(); got != "ime:true,sub:ja" {
 		t.Fatalf("two tap: %s", got)
@@ -170,7 +174,7 @@ func TestDirSwitch(t *testing.T) {
 
 func TestDirEnglish(t *testing.T) {
 	d, rec := newDirT(t)
-	d.Flick("R", dDR, false, true)
+	d.Flick("R", dDR, false, "bend")
 	rec.take()
 	var f strokeFile
 	if r, _ := NewRecognizer(strokesJSON); r == nil {

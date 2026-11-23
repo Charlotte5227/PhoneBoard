@@ -133,31 +133,34 @@ func (d *Dir) setSub(m string, sound bool) {
 
 func (d *Dir) warn() { d.out.snd(SndWarn, 0) }
 
+// 曲げ（右の ↖ から指を離さずに → ↓ ↑）で出す操作
+var dirBendFn = map[string]int{"bs": dLeft, "enter": dDown, "tab": dRight}
+
 // Preview は右の親指が切り替え口（↘）に入った時・そこから左へ曲げた時、
-// 「長く引く」の長さを超えた時（音で知らせる。離す前に戻せば普通のはじきになる）。
-func (d *Dir) Preview(side string, dir int, bend, long bool) {
+// ↖ から曲げた時（音で知らせる。離す前に戻せば取り消し）。
+func (d *Dir) Preview(side string, dir int, bend string) {
 	if side != "R" || d.Sub == "en" {
 		return
 	}
-	if long {
-		switch dir {
-		case dLeft:
-			d.out.snd(SndHeavy, 2)
-			d.out.echo("削除？", false)
-		case dDown:
-			d.out.snd(SndHeavy, 8)
-			d.out.echo("確定？", false)
-		case dRight:
-			d.out.snd(SndHeavy, 11)
-			d.out.echo("Tab？", false)
-		}
+	switch bend {
+	case "bs":
+		d.out.snd(SndHeavy, 2)
+		d.out.echo("削除？", false)
+		return
+	case "enter":
+		d.out.snd(SndHeavy, 8)
+		d.out.echo("確定？", false)
+		return
+	case "tab":
+		d.out.snd(SndHeavy, 11)
+		d.out.echo("Tab？", false)
 		return
 	}
 	if dir != dDR {
 		return
 	}
 	switch {
-	case bend:
+	case bend == "bend":
 		d.out.snd(SndMod, 11)
 		d.out.echo("英字", false)
 	case d.Sub == "ja":
@@ -169,10 +172,16 @@ func (d *Dir) Preview(side string, dir int, bend, long bool) {
 	}
 }
 
-// Flick ははじき1回（指を離した時）。
-func (d *Dir) Flick(side string, dir int, long, bend bool) {
+// Flick ははじき1回（指を離した時）。bend: "bend"=↘から左へ, "bs"/"enter"/"tab"=↖から曲げた
+func (d *Dir) Flick(side string, dir int, long bool, bend string) {
 	if dir < 0 || dir > 8 {
 		return
+	}
+	if side == "R" && d.Sub != "en" {
+		if f, ok := dirBendFn[bend]; ok {
+			d.commonLong(f)
+			return
+		}
 	}
 	switch d.Sub {
 	case "ja":
@@ -245,12 +254,12 @@ func (d *Dir) jaLeft(dir int) {
 	d.out.echo(string(dirRowName[d.row])+"行", false)
 }
 
-func (d *Dir) jaRight(dir int, long, bend bool) {
+func (d *Dir) jaRight(dir int, long bool, bend string) {
 	if long && d.commonLong(dir) {
 		return
 	}
 	if dir == dDR { // 切り替え口
-		d.setSub(map[bool]string{true: "en", false: "num"}[bend], true)
+		d.setSub(map[bool]string{true: "en", false: "num"}[bend == "bend"], true)
 		return
 	}
 	if d.conv && d.row < 0 {
@@ -398,12 +407,12 @@ func (d *Dir) convert() {
 
 // ----- 数字 -----
 
-func (d *Dir) numFlick(side string, dir int, long, bend bool) {
+func (d *Dir) numFlick(side string, dir int, long bool, bend string) {
 	if side == "R" && long && d.commonLong(dir) {
 		return
 	}
 	if side == "R" && dir == dDR {
-		d.setSub(map[bool]string{true: "en", false: "ja"}[bend], true)
+		d.setSub(map[bool]string{true: "en", false: "ja"}[bend == "bend"], true)
 		return
 	}
 	var s string
