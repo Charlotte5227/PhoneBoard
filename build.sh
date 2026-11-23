@@ -5,6 +5,9 @@
 set -e
 cd "$(dirname "$0")"
 mkdir -p dist
+# 練習ページで保存した一筆書きの見本（handwriting/ の一番新しいもの）を組み込む
+latest=$(ls handwriting/*.json 2>/dev/null | sort | tail -n 1 || true)
+if [ -n "$latest" ]; then cp "$latest" pc/strokes.json; fi
 ( cd pc
   if command -v x86_64-w64-mingw32-windres >/dev/null; then
     x86_64-w64-mingw32-windres --preprocessor=cpp --preprocessor-arg=-P -O coff -i app.rc -o rsrc_windows_amd64.syso

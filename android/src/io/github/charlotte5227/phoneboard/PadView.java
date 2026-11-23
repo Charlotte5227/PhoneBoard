@@ -87,6 +87,7 @@ public class PadView extends View {
     private float vx, vy;              // スクロールの慣性用 dp/ms
     private long lastMtSend;
     private int mtId = -1;
+    private final DirPad dir;
 
     public PadView(Context c, Host host) {
         super(c);
@@ -98,6 +99,11 @@ public class PadView extends View {
         z.type = "pad"; z.label = "パッド"; z.x = 0; z.y = 0; z.w = 1; z.h = 1;
         mouseZones.add(z);
         setKeepScreenOn(true);
+        dir = new DirPad(new DirPad.Out() {
+            public void send(JSONObject o) { PadView.this.host.send(o); }
+            public void vibrate(long ms, int amp) { PadView.this.host.vibrate(ms, amp); }
+            public void redraw() { invalidate(); }
+        }, dens);
     }
 
     // ===== PCからの設定 =====
@@ -106,6 +112,7 @@ public class PadView extends View {
         try {
             JSONObject mo = m.optJSONObject("mouse");
             JSONObject ga = m.optJSONObject("game");
+            dir.applyCfg(m.optJSONObject("dir"));
             if (ga != null) readZones(ga.optJSONArray("zones"), gameZones);
             if (mo != null) {
                 readZones(mo.optJSONArray("zones"), mouseZones);
@@ -167,6 +174,9 @@ public class PadView extends View {
     }
 
     public String getMode() { return mode; }
+
+    /** 方向入力の画面（ja / num / en） */
+    public void setDirSub(String m) { dir.setSub(m); }
 
     public void setMode(String m) {
         if (m.equals(mode)) return;
@@ -319,10 +329,13 @@ public class PadView extends View {
     private void cancelAll() {
         handler.removeCallbacks(threeHold);
         handler.removeCallbacks(longPressRun);
+        dir.cancelAll();
         for (int i = 0; i < ptrs.size(); i++) {
             Ptr p = ptrs.valueAt(i);
             if ("keyboard".equals(mode)) {
                 sendTouch("kt", "c", p.id, p.lastX, p.lastY, -2);
+            } else if ("dir".equals(mode)) {
+                // 方向入力は離した時に送るので、途中で取り消すものはない
             } else {
                 Zone z = zoneOf(p);
                 if (z != null && "button".equals(z.type)) send("t", "btn", "a", z.action, "s", "up");
@@ -379,6 +392,11 @@ public class PadView extends View {
             sendTouch("kt", "d", id, x, y, -2);
             return;
         }
+        if ("dir".equals(mode)) {
+            dir.down(id, x, y, getWidth());
+            invalidate();
+            return;
+        }
         stopMomentum();
         p.zone = zoneAt(x, y);
         if (miniMap) {
@@ -424,6 +442,13 @@ public class PadView extends View {
             p.lastX = x;
             p.lastY = y;
             sendTouch("kt", "m", id, x, y, -2);
+            return;
+        }
+        if ("dir".equals(mode)) {
+            p.lastX = x;
+            p.lastY = y;
+            dir.move(id, x, y);
+            invalidate();
             return;
         }
         if (miniMap && id == mtId && now - lastMtSend > 30) {
@@ -477,6 +502,11 @@ public class PadView extends View {
         long now = SystemClock.uptimeMillis();
         if ("keyboard".equals(mode)) {
             sendTouch("kt", "u", id, x, y, -2);
+            return;
+        }
+        if ("dir".equals(mode)) {
+            dir.up(id, x, y);
+            invalidate();
             return;
         }
         if (miniMap && id == mtId) sendTouch("mt", "u", id, x, y, p.zone);
@@ -553,7 +583,9 @@ public class PadView extends View {
         int w = getWidth(), h = getHeight();
         c.drawColor(Color.BLACK);
         float r = 8 * dens;
-        if ("keyboard".equals(mode)) {
+        if ("dir".equals(mode)) {
+            dir.draw(c, w, h);
+        } else if ("keyboard".equals(mode)) {
             float sx = w / kbCols, sy = h / kbRows;
             text.setTextSize(Math.min(sx, sy) * 0.32f);
             for (KeyBox k : keys) {

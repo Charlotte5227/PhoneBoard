@@ -109,6 +109,16 @@ code{background:var(--panel2);padding:1px 5px;border-radius:4px}
 </section>
 
 <section data-tab="マウス"><div class="grid" id="f-mouse"></div></section>
+<section data-tab="方向入力">
+  <div class="grid" id="f-dir"></div>
+  <p class="sub"><b>方向入力</b>は画面を見ずに打つための入力方法です。左右どちらの半分も、触れる場所は自由で、はじいた方向だけで決まります。</p>
+  <p class="sub"><b>日本語</b>: 左の親指で行（↖か ↑さ ↗た ←な トンは →ま ↙や ↓ら ↘わ）、右の親指で段（トンあ ←い ↑う →え ↓お）。右の ↖ん ↗変換 ↙濁点・小文字 ↘数字へ（そのまま左へ引くと英字へ）。右を長く引く: ←削除 ↓確定。<br>
+  行を選んでから右 ↖/↙ で記号（か「」 さ【】 た…： な〜 は？！ ま（） や→← ら♪ わｗ（笑））。わ行の い・う・え は 、。・、や行の い は ー、え は 空白。<br>
+  変換中: 右 ↓次の候補 ↑前の候補 →確定 ←取り消し、左 ←→ で区切りを動かす。</p>
+  <p class="sub"><b>数字</b>: 左の親指はテンキー（トン5、↖1 ↑2 ↗3 …）、右の親指はトン0、↑. ↓, ←- →+ ↖/ ↗: ↙%。右 ↘ で日本語へ。<br>
+  <b>英字</b>: 画面のどこにでも一筆書き。もう片方の指で押さえたまま書くと大文字。両手の親指で同時にトンで日本語へ。見本は練習ページ（GitHub Pages）で作れます。</p>
+  <p class="sub">記号のうち【】♪ｗ（笑）は日本語入力を通さずに直接入れるので、入力途中の文字が先に確定されることがあります。</p>
+</section>
 <section data-tab="ゲーム">
   <div class="grid" id="f-game"></div>
   <p class="sub"><b>ゲーム画面</b>はスマホの左側に WASD などのキー、右側に視点を動かすパッドとクリックボタンが並ぶ画面です。視点パッドをトンと叩くと左クリックです。キーもクリックボタンも<b>押している間ずっと押しっぱなし</b>になり、複数同時に押せます。配置は「マウス・ゲーム画面」タブで「ゲーム画面」を選ぶと変えられます。ボタンのアクションに <code>{W}</code> や <code>{LSHIFT}</code> のようにキーを書くと、そのキーを押しっぱなしにします。</p>
@@ -221,7 +231,7 @@ const KEYS=[["ESC","Esc"],["TAB","Tab"],["ENTER","Enter"],["BS","BackSpace"],["D
 ["MINUS","- ="],["CARET","^ ~"],["YEN","¥ |"],["AT","@ `"],["LBRACKET","[ {"],["RBRACKET","] }"],["SEMICOLON","; +"],["COLON",": *"],
 ["COMMA",", <"],["PERIOD",". >"],["SLASH","/ ?"],["BACKSLASH","\\ _（ろ）"],["APPS","アプリケーション(メニュー)"],["PRINTSCREEN","PrintScreen"],["INSERT","Insert"],
 ["VOLUP","音量＋"],["VOLDOWN","音量－"],["MUTE","ミュート"],["PLAYPAUSE","再生/一時停止"],["NEXT","次の曲"],["PREV","前の曲"]];
-const ACTIONS=[["{MOUSE}","マウスへ"],["{KEYBOARD}","キーボードへ"],["{GAME}","ゲーム画面へ"],["{TOGGLE}","マウス/キーボード（/ゲーム）切替"],
+const ACTIONS=[["{MOUSE}","マウスへ"],["{KEYBOARD}","キーボードへ"],["{GAME}","ゲーム画面へ"],["{DIRECT}","方向入力へ"],["{TOGGLE}","マウス/キーボード（/ゲーム）切替"],
 ["{W}","Wキー（ボタンでは押している間押しっぱなし。他のキー名も同様）"],["{LSHIFT}","左Shift（押しっぱなし。LCTRL・LALTも可）"],
 ["{CLICK_L}","左クリック（ボタン・音量キーでは押している間押しっぱなし）"],["{CLICK_R}","右クリック"],["{CLICK_M}","中クリック"],["{DBLCLICK}","ダブルクリック"],
 ["{TAPMODE}","パッドのタップを 左⇔右クリック 切替"],["{SCROLLMODE}","パッドを スクロール⇔カーソル 切替"],
@@ -253,6 +263,7 @@ const SCHEMA={
   ["opacity","キーボード表示の不透明度(%)","range",20,100,1],["showHints","キーにShift/Fnの文字も小さく表示","bool"],["showHistory","入力履歴・IMEの状態を表示","bool"],
   ["miniMap","マウス操作中、触れている位置を小窓で表示","bool"],["miniWidth","小窓の幅(px)","range",120,600,5],
   ["miniAnchor","小窓の位置","select",{"bottom-right":"右下","bottom-left":"左下","top-right":"右上","top-left":"左上"}],["toast","モード切替などを画面中央に表示","bool"]],
+ dir:[["enabled","切り替えボタン・{TOGGLE}で方向入力も順番に出す（キーボードの次）","bool"],["flickDp","これより短い動きは「トン」（dp）","range",6,40,1],["longDp","これより長いと「長く引く」（dp）","range",40,200,5],["bendDp","↘から左へこれだけ引くと英字（dp）","range",10,120,5]],
  game:[["enabled","切り替えボタン・{TOGGLE}でゲーム画面も順番に出す（マウス→キーボード→ゲーム）","bool"],["lookSens","視点パッドの速さ","range",0.2,8,0.1]],
  buttons:[["mouseVolUp","マウス中: 音量↑","text"],["mouseVolDown","マウス中: 音量↓","text"],["kbVolUp","キーボード中: 音量↑","text"],["kbVolDown","キーボード中: 音量↓","text"]]
 };
@@ -387,7 +398,7 @@ async function defaultZones(){const d=await api('/api/layouts/default');lay[$('z
 
 (async()=>{
   cfg=await api('/api/config');lay=await api('/api/layouts');status=await api('/api/status');
-  buildForm('general');buildForm('keyboard','keyboard');buildForm('mouse','mouse');buildForm('haptic','haptic');buildForm('game','game');buildForm('overlay','overlay');buildForm('buttons','buttons');
+  buildForm('general');buildForm('keyboard','keyboard');buildForm('mouse','mouse');buildForm('haptic','haptic');buildForm('game','game');buildForm('dir','dir');buildForm('overlay','overlay');buildForm('buttons','buttons');
   renderStatus();renderBoard();fillZoneForm();show(+(localStorage.pbTab2||0));setInterval(poll,1000);
 })();
 </script>

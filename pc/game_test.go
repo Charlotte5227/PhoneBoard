@@ -51,3 +51,27 @@ func TestGameButtons(t *testing.T) {
 		t.Fatalf("not released: %s", got)
 	}
 }
+
+func TestDirApp(t *testing.T) {
+	os.Setenv("PHONEBOARD_DATA", t.TempDir())
+	inj := &LogInjector{}
+	a := NewApp(DefaultConfig(), DefaultLayouts(), inj)
+	s := nullSender{}
+	a.OnConnect(s, PhoneInfo{}, "x")
+	a.Handle(s, &Msg{T: "act", A: "{TOGGLE}"}) // マウス → キーボード
+	a.Handle(s, &Msg{T: "act", A: "{TOGGLE}"}) // キーボード → 方向入力
+	if a.mode != "dir" {
+		t.Fatalf("mode=%s", a.mode)
+	}
+	inj.Ops = nil
+	a.Handle(s, &Msg{T: "df", S: "L", N: dUp})
+	a.Handle(s, &Msg{T: "df", S: "R", N: dRight})
+	a.Handle(s, &Msg{T: "df", S: "R", N: dDR, B: "bend"})
+	a.Handle(s, &Msg{T: "ds", Pts: [][]float64{{0, 0}, {0, 100}, {70, 100}}, U: true})
+	a.Handle(s, &Msg{T: "d2"})
+	got := strings.Join(inj.Ops, ",")
+	want := "ascii se,ime false,ascii L,ime true"
+	if got != want {
+		t.Fatalf("got  %s\nwant %s", got, want)
+	}
+}

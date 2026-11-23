@@ -4,6 +4,7 @@ import (
 	"crypto/rand"
 	"encoding/json"
 	"fmt"
+	"math"
 	"math/big"
 	"os"
 	"path/filepath"
@@ -101,11 +102,21 @@ type Config struct {
 	Overlay     OverlayCfg  `json:"overlay"`
 	Buttons     ButtonCfg   `json:"buttons"`
 	Game        GameCfg     `json:"game"`
+	Dir         DirCfg      `json:"dir"`
+}
+
+// DirCfg は方向入力（画面を見ずに、はじく方向で打つ）の設定。
+type DirCfg struct {
+	Enabled bool    `json:"enabled"` // 切り替えに方向入力を含める
+	FlickDp float64 `json:"flickDp"` // これより短い動きは「トン」
+	LongDp  float64 `json:"longDp"`  // これより長いと「長く引く」
+	BendDp  float64 `json:"bendDp"`  // ↘から左へこれだけ引くと英字
 }
 
 func DefaultConfig() *Config {
 	return &Config{
 		Game:        GameCfg{Enabled: false, LookSens: 1.5},
+		Dir:         DirCfg{Enabled: true, FlickDp: 16, LongDp: 80, BendDp: 30},
 		Schema:      configSchema,
 		Port:        39500,
 		PIN:         randomPIN(),
@@ -207,6 +218,15 @@ func (c *Config) Normalize() {
 	}
 	if o.MiniAnchor == "" {
 		o.MiniAnchor = "bottom-right"
+	}
+	if c.Dir.FlickDp < 6 || c.Dir.FlickDp > 60 {
+		c.Dir.FlickDp = d.Dir.FlickDp
+	}
+	if c.Dir.LongDp < c.Dir.FlickDp+10 || c.Dir.LongDp > 300 {
+		c.Dir.LongDp = math.Max(d.Dir.LongDp, c.Dir.FlickDp+30)
+	}
+	if c.Dir.BendDp < 10 || c.Dir.BendDp > 200 {
+		c.Dir.BendDp = d.Dir.BendDp
 	}
 	if c.Game.LookSens <= 0 || c.Game.LookSens > 20 {
 		c.Game.LookSens = d.Game.LookSens

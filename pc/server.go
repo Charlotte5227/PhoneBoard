@@ -14,7 +14,7 @@ import (
 	"time"
 )
 
-const Version = "2.4.1"
+const Version = "2.5.0"
 
 // Session は1台のスマホとのTCP接続。改行区切りJSONでやり取りする。
 type Session struct {

@@ -24,26 +24,28 @@ type PhoneInfo struct {
 
 // Msg はスマホから届くメッセージ（全種類の項目をまとめた形）。
 type Msg struct {
-	T    string  `json:"t"`
-	A    string  `json:"a"`
-	B    string  `json:"b"`
-	K    string  `json:"k"`
-	S    string  `json:"s"`
-	M    string  `json:"m"`
-	X    float64 `json:"x"`
-	Y    float64 `json:"y"`
-	Dx   float64 `json:"dx"`
-	Dy   float64 `json:"dy"`
-	N    int     `json:"n"`
-	Z    int     `json:"z"`
-	ID   int     `json:"id"`
-	Wdp  float64 `json:"wdp"`
-	Hdp  float64 `json:"hdp"`
-	Name string  `json:"name"`
-	Pin  string  `json:"pin"`
-	V    int     `json:"v"`
-	Ts   int64   `json:"ts"`
-	Tok  string  `json:"tok"` // UDPで届くメッセージの合言葉
+	T    string      `json:"t"`
+	A    string      `json:"a"`
+	B    string      `json:"b"`
+	K    string      `json:"k"`
+	S    string      `json:"s"`
+	M    string      `json:"m"`
+	X    float64     `json:"x"`
+	Y    float64     `json:"y"`
+	Dx   float64     `json:"dx"`
+	Dy   float64     `json:"dy"`
+	N    int         `json:"n"`
+	Z    int         `json:"z"`
+	ID   int         `json:"id"`
+	Wdp  float64     `json:"wdp"`
+	Hdp  float64     `json:"hdp"`
+	Name string      `json:"name"`
+	Pin  string      `json:"pin"`
+	V    int         `json:"v"`
+	Ts   int64       `json:"ts"`
+	Tok  string      `json:"tok"` // UDPで届くメッセージの合言葉
+	Pts  [][]float64 `json:"pts"` // 英字の一筆書きの軌跡
+	U    bool        `json:"u"`   // 大文字（もう片方の指で押さえている）
 }
 
 type App struct {
@@ -59,6 +61,7 @@ type App struct {
 	tapRight   bool
 	scrollMode bool
 	held       map[int]bool
+	dir        *Dir           // 方向入力
 	heldKeys   map[uint16]int // 押しっぱなしのキー
 	fx, fy     float64
 	wy, wx     float64
@@ -87,6 +90,7 @@ func NewApp(cfg *Config, lay *Layouts, inj Injector) *App {
 		start: time.Now(),
 	}
 	a.kbd = NewKbd(a)
+	a.dir = NewDir(dirAdapter{a}, LoadRecognizer())
 	a.kbd.IME = func() bool { return a.imeOn }
 	_ = loadJSON(filepath.Join(dataDir(), "calib.json"), &a.kbd.Calib)
 	a.kbd.Learned = func() {
@@ -355,17 +359,21 @@ func (a *App) doActionLocked(s string, phase string) {
 		a.setModeLocked("mouse")
 	case "KEYBOARD":
 		a.setModeLocked("keyboard")
-	case "TOGGLE": // マウス → キーボード →（ゲーム画面を使うなら）ゲーム → マウス
+	case "TOGGLE": // マウス → キーボード →（使うなら）方向入力 →（使うなら）ゲーム → マウス
 		switch {
 		case a.mode == "mouse":
 			a.setModeLocked("keyboard")
-		case a.mode == "keyboard" && a.cfg.Game.Enabled:
+		case a.mode == "keyboard" && a.cfg.Dir.Enabled:
+			a.setModeLocked("dir")
+		case (a.mode == "keyboard" || a.mode == "dir") && a.cfg.Game.Enabled:
 			a.setModeLocked("game")
 		default:
 			a.setModeLocked("mouse")
 		}
 	case "GAME":
 		a.setModeLocked("game")
+	case "DIRECT", "DIR":
+		a.setModeLocked("dir")
 	case "TAPMODE":
 		a.tapRight = !a.tapRight
 		a.vib("toggle")
@@ -408,16 +416,19 @@ func (a *App) doActionLocked(s string, phase string) {
 }
 
 func (a *App) setModeLocked(m string) {
-	if m != "mouse" && m != "keyboard" && m != "game" {
+	if m != "mouse" && m != "keyboard" && m != "game" && m != "dir" {
 		return
 	}
 	a.mode = m
 	a.kbd.CancelAll()
 	a.kbd.ResetContext()
 	a.releaseHeldLocked()
-	a.toast(map[string]string{"mouse": "マウス", "keyboard": "キーボード", "game": "ゲーム"}[m])
+	a.toast(map[string]string{"mouse": "マウス", "keyboard": "キーボード", "game": "ゲーム", "dir": "方向入力"}[m])
 	a.vib("toggle")
 	a.send(map[string]any{"t": "setmode", "m": m})
+	if m == "dir" {
+		a.dir.Enter()
+	}
 	a.refreshOverlayLocked()
 }
 
@@ -525,9 +536,13 @@ func (a *App) sendCfgLocked() {
 		},
 		"kb":     map[string]any{"cols": b.Cols, "rows": b.Rows, "keys": keys},
 		"game":   map[string]any{"zones": a.lay.GameZones},
+		"dir":    map[string]any{"flickDp": a.cfg.Dir.FlickDp, "longDp": a.cfg.Dir.LongDp, "bendDp": a.cfg.Dir.BendDp},
 		"haptic": a.cfg.Haptic.Enabled,
 	})
 	a.sendStateLocked()
+	if a.mode == "dir" {
+		a.send(map[string]any{"t": "dsub", "m": a.dir.Sub})
+	}
 }
 
 // ===== 接続 =====
@@ -610,6 +625,30 @@ func (a *App) Handle(s Sender, m *Msg) {
 			}
 		}
 		a.refreshOverlayLocked()
+	case "df": // 方向入力: はじき1回
+		if a.mode == "dir" {
+			a.dir.Flick(m.S, m.N, m.Z != 0, m.B == "bend")
+			a.vib("commit")
+		}
+	case "dp": // 方向入力: 切り替え口に入った・曲げた（音で知らせる）
+		if a.mode == "dir" {
+			a.dir.Preview(m.S, m.N, m.B == "bend")
+		}
+	case "ds": // 英字の一筆書き
+		if a.mode == "dir" {
+			raw := make([]pt, 0, len(m.Pts))
+			for _, q := range m.Pts {
+				if len(q) >= 2 {
+					raw = append(raw, pt{q[0], q[1]})
+				}
+			}
+			a.dir.Stroke(raw, m.U)
+			a.vib("commit")
+		}
+	case "d2": // 両手の親指で同時にトン
+		if a.mode == "dir" {
+			a.dir.TwoTap()
+		}
 	case "mm":
 		a.mouseMoveLocked(m.Dx, m.Dy)
 	case "lm":
@@ -687,7 +726,7 @@ func (a *App) Handle(s Sender, m *Msg) {
 	case "hw": // 音量キー
 		up := m.K == "volup"
 		var act string
-		if a.mode == "keyboard" {
+		if a.mode == "keyboard" || a.mode == "dir" {
 			act = map[bool]string{true: a.cfg.Buttons.KbVolUp, false: a.cfg.Buttons.KbVolDown}[up]
 		} else {
 			act = map[bool]string{true: a.cfg.Buttons.MouseVolUp, false: a.cfg.Buttons.MouseVolDown}[up]
@@ -989,3 +1028,22 @@ func (o *OverlayModel) Get() (OverlayData, uint64) {
 	}
 	return d, o.ver
 }
+
+// dirAdapter は方向入力の出力を App につなぐ（App のロック中に呼ばれる）。
+type dirAdapter struct{ a *App }
+
+func (o dirAdapter) typeASCII(s string)           { o.a.inj.TypeASCII(s) }
+func (o dirAdapter) key(mods []uint16, vk uint16) { o.a.inj.KeyCombo(mods, vk) }
+func (o dirAdapter) uni(s string) {
+	for _, r := range s {
+		o.a.inj.TypeUnicode(r)
+	}
+}
+func (o dirAdapter) setIME(on bool) {
+	o.a.inj.SetIME(on, on)
+	o.a.imeAt = time.Time{} // IMEの状態をすぐ読み直す
+}
+func (o dirAdapter) snd(group string, semi int) { o.a.sound(group, semi) }
+func (o dirAdapter) echo(s string, warn bool)   { o.a.echo(s, warn) }
+func (o dirAdapter) toast(s string)             { o.a.toast(s) }
+func (o dirAdapter) sub(m string)               { o.a.send(map[string]any{"t": "dsub", "m": m}) }
