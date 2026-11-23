@@ -34,7 +34,7 @@ type dirOut interface {
 	snd(group string, semi int)   // 音
 	echo(s string, warn bool)     // 画面中央に一瞬表示
 	toast(s string)               // 画面の通知
-	sub(m string)                 // スマホへ今の画面（ja/num/en）を知らせる
+	sub(m, in string)             // スマホへ今の画面（ja/num/en）と受け付け方（flick/stroke）を知らせる
 }
 
 var (
@@ -106,6 +106,142 @@ type Dir struct {
 	comp int    // 入力途中（未確定）の文字数の目安
 	last rune   // 直前に打ったかな（濁点・小文字の切り替え用）
 	word []rune // 英字: 今の単語（迷った時の判断用）
+
+	mods      []string // 付けている修飾キー（ctrl / shift / win）。次の1文字に付く
+	selecting bool     // 音量↓を押して修飾キーを選んでいるところ
+}
+
+var (
+	modKeyVK   = map[string]uint16{"ctrl": 0xA2, "shift": 0xA0, "win": 0x5B}
+	modKeyName = map[string]string{"ctrl": "Ctrl", "shift": "Shift", "win": "Win"}
+	// ↙ から曲げる（または選択中に ↑ → ↓ へはじく）
+	modBend = map[string]string{"mshift": "shift", "mwin": "win", "mctrl": "ctrl"}
+	modDir  = map[int]string{dUp: "shift", dRight: "win", dDown: "ctrl"}
+)
+
+// inputKind はスマホ側の受け付け方: 英字（または修飾キーの後の1文字）は一筆書き、それ以外ははじき。
+func (d *Dir) inputKind() string {
+	if d.selecting {
+		return "flick"
+	}
+	if d.Sub == "en" || len(d.mods) > 0 {
+		return "stroke"
+	}
+	return "flick"
+}
+
+func (d *Dir) notify() { d.out.sub(d.Sub, d.inputKind()) }
+
+func (d *Dir) modLabel() string {
+	s := ""
+	for _, m := range d.mods {
+		s += modKeyName[m] + "+"
+	}
+	return s
+}
+
+// ModSelect は音量↓（{MODKEY}）: 修飾キーの選択を始める／やめる。
+func (d *Dir) ModSelect() {
+	d.selecting = !d.selecting
+	d.row = -1
+	if d.selecting {
+		d.out.snd(SndMod, 2)
+		d.out.echo("修飾キー？", false)
+		d.out.toast("修飾キー: ↑Shift →Win ↓Ctrl（トン=全部取り消し）")
+	} else {
+		d.out.snd(SndFunc, 2)
+		d.out.echo(d.modLabel(), false)
+	}
+	d.notify()
+}
+
+// modChoose は選択中のはじき1回。同じキーを選ぶと外す（撤回）。
+func (d *Dir) modChoose(dir int, bend string) {
+	d.selecting = false
+	m, ok := modBend[bend]
+	if !ok {
+		m, ok = modDir[dir]
+	}
+	switch {
+	case dir == dTap && bend == "":
+		d.mods = nil
+		d.out.snd(SndFunc, 1)
+		d.out.echo("修飾キー 取消", false)
+		d.out.toast("修飾キーなし")
+	case !ok:
+		d.warn()
+	default:
+		removed := false
+		for i, x := range d.mods {
+			if x == m {
+				d.mods = append(d.mods[:i], d.mods[i+1:]...)
+				removed = true
+				break
+			}
+		}
+		if removed {
+			d.out.snd(SndFunc, 3)
+			d.out.echo(modKeyName[m]+" 取消", false)
+		} else {
+			d.mods = append(d.mods, m)
+			d.out.snd(SndMod, 9)
+			d.out.echo(d.modLabel(), false)
+		}
+		if len(d.mods) > 0 {
+			d.out.toast(d.modLabel() + "（次の1文字を一筆書き）")
+		} else {
+			d.out.toast("修飾キーなし")
+		}
+	}
+	d.notify()
+}
+
+func (d *Dir) modVKs(upper bool) []uint16 {
+	var vs []uint16
+	for _, m := range d.mods {
+		vs = append(vs, modKeyVK[m])
+	}
+	if upper && !d.hasMod("shift") {
+		vs = append(vs, modKeyVK["shift"])
+	}
+	return vs
+}
+
+func (d *Dir) hasMod(m string) bool {
+	for _, x := range d.mods {
+		if x == m {
+			return true
+		}
+	}
+	return false
+}
+
+// useMods は修飾キー付きでキーを1つ押して、修飾キーを外す。
+func (d *Dir) useMods(vk uint16, label string, upper bool) {
+	vs := d.modVKs(upper)
+	d.out.key(vs, vk)
+	lab := d.modLabel()
+	if upper && !d.hasMod("shift") {
+		lab += "Shift+"
+	}
+	d.mods = nil
+	d.out.snd(SndMod, 6)
+	d.out.echo(lab+label, false)
+	d.notify()
+}
+
+// SingleTap は一筆書きの画面でのトン（修飾キーを付けている時だけ: そのキー単体を押す。Win だけでスタートなど）。
+func (d *Dir) SingleTap() {
+	if len(d.mods) == 0 || d.selecting {
+		return
+	}
+	vs := d.modVKs(false)
+	last := vs[len(vs)-1]
+	d.out.key(vs[:len(vs)-1], last)
+	d.out.echo(strings.TrimSuffix(d.modLabel(), "+"), false)
+	d.out.snd(SndMod, 6)
+	d.mods = nil
+	d.notify()
 }
 
 func NewDir(out dirOut, rec *Recognizer) *Dir {
@@ -117,13 +253,14 @@ func (d *Dir) Enter() { d.setSub("ja", false) }
 
 func (d *Dir) clear() {
 	d.row, d.conv, d.comp, d.last, d.word = -1, false, 0, 0, nil
+	d.mods, d.selecting = nil, false
 }
 
 func (d *Dir) setSub(m string, sound bool) {
 	d.clear()
 	d.Sub = m
 	d.out.setIME(m == "ja")
-	d.out.sub(m)
+	d.notify()
 	name := map[string]string{"ja": "日本語", "num": "数字", "en": "英字"}[m]
 	d.out.toast(name)
 	if sound {
@@ -139,6 +276,13 @@ var dirBendFn = map[string]int{"bs": dLeft, "enter": dDown, "tab": dRight}
 // Preview は右の親指が切り替え口（↘）に入った時・そこから左へ曲げた時、
 // ↖ から曲げた時（音で知らせる。離す前に戻せば取り消し）。
 func (d *Dir) Preview(side string, dir int, bend string) {
+	if m, ok := modBend[bend]; ok {
+		if d.selecting {
+			d.out.snd(SndMod, 9)
+			d.out.echo(modKeyName[m]+"？", false)
+		}
+		return
+	}
 	if side != "R" || d.Sub == "en" {
 		return
 	}
@@ -177,6 +321,13 @@ func (d *Dir) Flick(side string, dir int, long bool, bend string) {
 	if dir < 0 || dir > 8 {
 		return
 	}
+	if d.selecting {
+		d.modChoose(dir, bend)
+		return
+	}
+	if _, ok := modBend[bend]; ok {
+		bend = "" // 選択中でなければ ↙ から曲げても普通の ↙
+	}
 	if side == "R" && d.Sub != "en" {
 		if f, ok := dirBendFn[bend]; ok {
 			d.commonLong(f)
@@ -195,8 +346,15 @@ func (d *Dir) Flick(side string, dir int, long bool, bend string) {
 	}
 }
 
-// 両方の親指で同時にトン（英字 → 日本語）
+// 両方の親指で同時にトン（英字 → 日本語。修飾キーを付けている時は取り消し）
 func (d *Dir) TwoTap() {
+	if len(d.mods) > 0 && !d.selecting {
+		d.mods = nil
+		d.out.snd(SndFunc, 1)
+		d.out.echo("修飾キー 取消", false)
+		d.notify()
+		return
+	}
 	if d.Sub == "en" {
 		d.setSub("ja", true)
 	}
@@ -437,7 +595,7 @@ func (d *Dir) numFlick(side string, dir int, long bool, bend string) {
 // ----- 英字（一筆書き） -----
 
 func (d *Dir) Stroke(raw []pt, upper bool) {
-	if d.Sub != "en" || d.rec == nil {
+	if d.inputKind() != "stroke" || d.rec == nil {
 		return
 	}
 	ms := d.rec.Recognize(raw)
@@ -454,6 +612,19 @@ func (d *Dir) Stroke(raw []pt, upper bool) {
 		if b > a*1.5 {
 			best = ms[1]
 		}
+	}
+	if len(d.mods) > 0 { // 修飾キー付きの1文字
+		switch best.Key {
+		case " ":
+			d.useMods(vkSpace, "Space", upper)
+		case "BS":
+			d.useMods(vkBack, "BS", upper)
+		case "ENTER":
+			d.useMods(vkReturn, "Enter", upper)
+		default:
+			d.useMods(uint16(best.Key[0]), best.Key, upper)
+		}
+		return
 	}
 	switch best.Key {
 	case " ":

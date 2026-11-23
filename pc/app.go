@@ -374,6 +374,10 @@ func (a *App) doActionLocked(s string, phase string) {
 		a.setModeLocked("game")
 	case "DIRECT", "DIR":
 		a.setModeLocked("dir")
+	case "MODKEY": // 方向入力: 修飾キーを選ぶ
+		if a.mode == "dir" {
+			a.dir.ModSelect()
+		}
 	case "TAPMODE":
 		a.tapRight = !a.tapRight
 		a.vib("toggle")
@@ -542,7 +546,7 @@ func (a *App) sendCfgLocked() {
 	})
 	a.sendStateLocked()
 	if a.mode == "dir" {
-		a.send(map[string]any{"t": "dsub", "m": a.dir.Sub})
+		a.dir.notify()
 	}
 }
 
@@ -650,6 +654,10 @@ func (a *App) Handle(s Sender, m *Msg) {
 		if a.mode == "dir" {
 			a.dir.TwoTap()
 		}
+	case "d1": // 一筆書きの画面でトン
+		if a.mode == "dir" {
+			a.dir.SingleTap()
+		}
 	case "mm":
 		a.mouseMoveLocked(m.Dx, m.Dy)
 	case "lm":
@@ -727,7 +735,9 @@ func (a *App) Handle(s Sender, m *Msg) {
 	case "hw": // 音量キー
 		up := m.K == "volup"
 		var act string
-		if a.mode == "keyboard" || a.mode == "dir" {
+		if a.mode == "dir" {
+			act = map[bool]string{true: a.cfg.Buttons.DirVolUp, false: a.cfg.Buttons.DirVolDown}[up]
+		} else if a.mode == "keyboard" {
 			act = map[bool]string{true: a.cfg.Buttons.KbVolUp, false: a.cfg.Buttons.KbVolDown}[up]
 		} else {
 			act = map[bool]string{true: a.cfg.Buttons.MouseVolUp, false: a.cfg.Buttons.MouseVolDown}[up]
@@ -1047,4 +1057,6 @@ func (o dirAdapter) setIME(on bool) {
 func (o dirAdapter) snd(group string, semi int) { o.a.sound(group, semi) }
 func (o dirAdapter) echo(s string, warn bool)   { o.a.echo(s, warn) }
 func (o dirAdapter) toast(s string)             { o.a.toast(s) }
-func (o dirAdapter) sub(m string)               { o.a.send(map[string]any{"t": "dsub", "m": m}) }
+func (o dirAdapter) sub(m, in string) {
+	o.a.send(map[string]any{"t": "dsub", "m": m, "in": in})
+}

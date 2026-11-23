@@ -117,6 +117,7 @@ code{background:var(--panel2);padding:1px 5px;border-radius:4px}
   変換中: 右 ↓次の候補 ↑前の候補 →確定 ←取り消し、左 ←→ で区切りを動かす。</p>
   <p class="sub"><b>数字</b>: 左の親指はテンキー（トン5、↖1 ↑2 ↗3 …）、右の親指はトン0、↑. ↓, ←- →+ ↖/ ↗: ↙%。右 ↘ で日本語へ。<br>
   <b>英字</b>: 画面のどこにでも一筆書き。もう片方の指で押さえたまま書くと大文字。両手の親指で同時にトンで日本語へ。見本は練習ページ（GitHub Pages）で作れます。</p>
+  <p class="sub"><b>修飾キー</b>（Shift・Windows・Ctrl）: 音量↓（{MODKEY}）を押してから、↙ から ↑Shift →Win ↓Ctrl に曲げる（↑→↓ にはじくだけでも可）。次の1文字だけ一筆書きになり、その文字に付きます（例: Ctrl を選んで C を書く → Ctrl+C）。もう一度音量↓で重ねる・同じキーを選ぶと外す・選択中にトンで全部取り消し。付けた後にトンだけするとそのキー単体（Win だけでスタートメニュー）。</p>
   <p class="sub">記号のうち【】♪ｗ（笑）は日本語入力を通さずに直接入れるので、入力途中の文字が先に確定されることがあります。</p>
 </section>
 <section data-tab="ゲーム">
@@ -231,7 +232,7 @@ const KEYS=[["ESC","Esc"],["TAB","Tab"],["ENTER","Enter"],["BS","BackSpace"],["D
 ["MINUS","- ="],["CARET","^ ~"],["YEN","¥ |"],["AT","@ `"],["LBRACKET","[ {"],["RBRACKET","] }"],["SEMICOLON","; +"],["COLON",": *"],
 ["COMMA",", <"],["PERIOD",". >"],["SLASH","/ ?"],["BACKSLASH","\\ _（ろ）"],["APPS","アプリケーション(メニュー)"],["PRINTSCREEN","PrintScreen"],["INSERT","Insert"],
 ["VOLUP","音量＋"],["VOLDOWN","音量－"],["MUTE","ミュート"],["PLAYPAUSE","再生/一時停止"],["NEXT","次の曲"],["PREV","前の曲"]];
-const ACTIONS=[["{MOUSE}","マウスへ"],["{KEYBOARD}","キーボードへ"],["{GAME}","ゲーム画面へ"],["{DIRECT}","方向入力へ"],["{TOGGLE}","マウス/キーボード（/ゲーム）切替"],
+const ACTIONS=[["{MOUSE}","マウスへ"],["{KEYBOARD}","キーボードへ"],["{GAME}","ゲーム画面へ"],["{DIRECT}","方向入力へ"],["{MODKEY}","修飾キーを選ぶ（方向入力中）"],["{TOGGLE}","マウス/キーボード（/ゲーム）切替"],
 ["{W}","Wキー（ボタンでは押している間押しっぱなし。他のキー名も同様）"],["{LSHIFT}","左Shift（押しっぱなし。LCTRL・LALTも可）"],
 ["{CLICK_L}","左クリック（ボタン・音量キーでは押している間押しっぱなし）"],["{CLICK_R}","右クリック"],["{CLICK_M}","中クリック"],["{DBLCLICK}","ダブルクリック"],
 ["{TAPMODE}","パッドのタップを 左⇔右クリック 切替"],["{SCROLLMODE}","パッドを スクロール⇔カーソル 切替"],
@@ -265,7 +266,7 @@ const SCHEMA={
   ["miniAnchor","小窓の位置","select",{"bottom-right":"右下","bottom-left":"左下","top-right":"右上","top-left":"左上"}],["toast","モード切替などを画面中央に表示","bool"]],
  dir:[["enabled","切り替えボタン・{TOGGLE}で方向入力も順番に出す（キーボードの次）","bool"],["flickDp","これより短い動きは「トン」（dp）","range",6,40,1],["bendDp","曲げの判定の長さ（↖から→↓↑、↘から←）（dp）","range",10,120,5]],
  game:[["enabled","切り替えボタン・{TOGGLE}でゲーム画面も順番に出す（マウス→キーボード→ゲーム）","bool"],["lookSens","視点パッドの速さ","range",0.2,8,0.1]],
- buttons:[["mouseVolUp","マウス中: 音量↑","text"],["mouseVolDown","マウス中: 音量↓","text"],["kbVolUp","キーボード・方向入力中: 音量↑","text"],["kbVolDown","キーボード・方向入力中: 音量↓","text"]]
+ buttons:[["mouseVolUp","マウス中: 音量↑","text"],["mouseVolDown","マウス中: 音量↓","text"],["kbVolUp","キーボード中: 音量↑","text"],["kbVolDown","キーボード中: 音量↓","text"],["dirVolUp","方向入力中: 音量↑","text"],["dirVolDown","方向入力中: 音量↓","text"]]
 };
 
 let cfg=null, lay=null, status={phone:{wdp:915,hdp:412}};

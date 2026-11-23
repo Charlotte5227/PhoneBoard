@@ -79,6 +79,8 @@ type ButtonCfg struct {
 	MouseVolDown string `json:"mouseVolDown"`
 	KbVolUp      string `json:"kbVolUp"`
 	KbVolDown    string `json:"kbVolDown"`
+	DirVolUp     string `json:"dirVolUp"`
+	DirVolDown   string `json:"dirVolDown"`
 }
 
 // configSchema は設定形式の版。上げると古い既定値を新しい既定値に置き換える。
@@ -143,6 +145,7 @@ func DefaultConfig() *Config {
 		Buttons: ButtonCfg{
 			MouseVolUp: "{KEYBOARD}", MouseVolDown: "{CLICK_L}",
 			KbVolUp: "{MOUSE}", KbVolDown: "{KANJI}",
+			DirVolUp: "{MOUSE}", DirVolDown: "{MODKEY}",
 		},
 	}
 }

@@ -40,10 +40,11 @@ class DirPad {
         float seX;                   // ↘ に入ってからの一番右（px）
         float len;                   // なぞった長さ（dp）
         boolean others, holder;      // 英字: 他の指が触れていた（=大文字）/ 大文字用に押さえている指
-        boolean ulIn, ulFrozen;      // ↖ に入った / そこから曲げた（基準点を固定）
-        float ax, ay;                // ↖ の行き着いた点（曲げの基準）
+        int corner;                  // 曲げの起点にした方向（8=↖ 6=↙、0=なし）
+        boolean ulFrozen;            // 曲げた（基準点を固定）
+        float ax, ay;                // 角の行き着いた点（曲げの基準）
         float px, py;                // 直前の位置
-        String ulKind;               // ↖ から曲げた操作: bs / enter / tab
+        String ulKind;               // 曲げた操作: bs / enter / tab / mshift / mwin / mctrl
         boolean repeated;            // 削除を押さえたまま連続で送った
         Runnable rep;                // 連続削除のタイマー
         final List<float[]> pts = new ArrayList<float[]>();
@@ -52,6 +53,10 @@ class DirPad {
     private final Out out;
     private final float dens;
     String sub = "ja";
+    String inKind = "flick"; // flick=はじき / stroke=一筆書き（英字・修飾キーの後の1文字）
+    private Runnable pendingTap;
+
+    boolean stroke() { return "stroke".equals(inKind); }
     float flickDp = 16, bendDp = 30;
     int repeatDelayMs = 450, repeatIntervalMs = 60;
     private final Handler handler = new Handler(Looper.getMainLooper());
@@ -74,8 +79,9 @@ class DirPad {
         repeatIntervalMs = Math.max(20, d.optInt("repeatIntervalMs", repeatIntervalMs));
     }
 
-    void setSub(String m) {
+    void setSub(String m, String in) {
         sub = m;
+        inKind = in != null && in.length() > 0 ? in : ("en".equals(m) ? "stroke" : "flick");
         cancelAll();
         out.redraw();
     }
@@ -123,7 +129,7 @@ class DirPad {
         f.t0 = SystemClock.uptimeMillis();
         f.left = x < width / 2f;
         f.pts.add(new float[]{x / dens, y / dens});
-        if ("en".equals(sub)) {
+        if (stroke()) {
             if (fs.size() > 0) {
                 f.others = true;
                 for (int i = 0; i < fs.size(); i++) fs.valueAt(i).others = true;
@@ -138,7 +144,7 @@ class DirPad {
         f.len += Math.hypot(x - f.x, y - f.y) / dens;
         f.x = x;
         f.y = y;
-        if ("en".equals(sub)) {
+        if (stroke()) {
             f.pts.add(new float[]{x / dens, y / dens});
             out.redraw();
             return;
@@ -149,42 +155,45 @@ class DirPad {
             f.farX = x;
             f.farY = y;
         }
-        // 右の親指: ↘（切り替え口）に入った → 音で知らせる。そこから左へ引いたら英字
-        if (!f.left) {
-            int dir = d >= flickDp ? dirOf(x - f.x0, y - f.y0) : 0;
-            // ↖（ん）から指を離さずに → 削除 / ↓ 確定 / ↑ Tab
-            if (!f.ulIn && !f.seIn && dir == 8) {
-                f.ulIn = true;
+        int dir = d >= flickDp ? dirOf(x - f.x0, y - f.y0) : 0;
+        // 角から指を離さずに曲げる:
+        //   右の ↖（ん）から → 削除 / ↓ 確定 / ↑ Tab
+        //   ↖ ↙ どちらの手でも ↙ から ↑ Shift / → Win / ↓ Ctrl（修飾キーの選択中だけ有効。判断はPC）
+        if (f.corner == 0 && !f.seIn && ((dir == 8 && !f.left) || dir == 6)) {
+            f.corner = dir;
+            f.ax = x;
+            f.ay = y;
+        } else if (f.corner != 0) {
+            float sx = x - f.px, sy = y - f.py;
+            // 角の方向へ進んでいる間は基準点もついていく（曲げた後は固定）
+            if (!f.ulFrozen && Math.hypot(sx, sy) / dens > 0.5f && dirOf(sx, sy) == f.corner) {
                 f.ax = x;
                 f.ay = y;
-            } else if (f.ulIn) {
-                float sx = x - f.px, sy = y - f.py;
-                // ↖ へ進んでいる間は基準点もついていく（曲げた後は固定）
-                if (!f.ulFrozen && Math.hypot(sx, sy) / dens > 0.5f && dirOf(sx, sy) == 8) {
-                    f.ax = x;
-                    f.ay = y;
-                }
-                float vx = (x - f.ax) / dens, vy = (y - f.ay) / dens;
-                String k = null;
-                if (Math.hypot(vx, vy) >= bendDp) {
-                    int vd = dirOf(vx, vy);
-                    k = vd == 3 ? "bs" : vd == 5 ? "enter" : vd == 1 ? "tab" : null;
-                }
-                if (k != null) f.ulFrozen = true;
-                boolean changed = k == null ? f.ulKind != null : !k.equals(f.ulKind);
-                if (changed) {
-                    f.ulKind = k;
-                    if ("bs".equals(k)) startRepeat(f);
-                    else stopRepeat(f);
-                    if (k != null) {
-                        previewBend(k);
-                        out.vibrate(20, 220);
-                    } else {
-                        out.vibrate(8, 120); // 戻した → 取り消し
-                    }
+            }
+            float vx = (x - f.ax) / dens, vy = (y - f.ay) / dens;
+            String k = null;
+            if (Math.hypot(vx, vy) >= bendDp) {
+                int vd = dirOf(vx, vy);
+                if (f.corner == 8) k = vd == 3 ? "bs" : vd == 5 ? "enter" : vd == 1 ? "tab" : null;
+                else k = vd == 1 ? "mshift" : vd == 3 ? "mwin" : vd == 5 ? "mctrl" : null;
+            }
+            if (k != null) f.ulFrozen = true;
+            boolean changed = k == null ? f.ulKind != null : !k.equals(f.ulKind);
+            if (changed) {
+                f.ulKind = k;
+                if ("bs".equals(k)) startRepeat(f);
+                else stopRepeat(f);
+                if (k != null) {
+                    previewBend(k, f.left ? "L" : "R");
+                    out.vibrate(20, 220);
+                } else {
+                    out.vibrate(8, 120); // 戻した → 取り消し
                 }
             }
-            if (!f.seIn && !f.ulIn && dir == 4) {
+        }
+        // 右の親指: ↘（切り替え口）に入った → 音で知らせる。そこから左へ引いたら英字
+        if (!f.left) {
+            if (!f.seIn && f.corner == 0 && dir == 4) {
                 f.seIn = true;
                 f.seX = x;
                 preview(4, false);
@@ -211,7 +220,7 @@ class DirPad {
         stopRepeat(f);
         if (f.repeated) return; // 押さえたまま連続で消した → 離した時には何も送らない
         long now = SystemClock.uptimeMillis();
-        if ("en".equals(sub)) {
+        if (stroke()) {
             upEnglish(f, now);
             return;
         }
@@ -222,7 +231,7 @@ class DirPad {
             dir = 4;
             kind = "bend";
         } else if (f.ulKind != null) {
-            dir = 8;
+            dir = f.corner;
             kind = f.ulKind;
         } else if (f.maxD < flickDp) {
             dir = 0;
@@ -248,10 +257,21 @@ class DirPad {
             // トン: 2本の指がほぼ同時にトン → 日本語へ戻る
             if (lastTapT1 > 0 && now - lastTapT1 < 400 && Math.abs(f.t0 - lastTapT0) < 220) {
                 lastTapT0 = lastTapT1 = -1;
+                if (pendingTap != null) handler.removeCallbacks(pendingTap);
+                pendingTap = null;
                 send1("d2");
             } else {
                 lastTapT0 = f.t0;
                 lastTapT1 = now;
+                // 1本だけのトン（もう1本が続かなければ）: 修飾キーだけを押す用
+                if (pendingTap != null) handler.removeCallbacks(pendingTap);
+                pendingTap = new Runnable() {
+                    public void run() {
+                        pendingTap = null;
+                        send1("d1");
+                    }
+                };
+                handler.postDelayed(pendingTap, 260);
             }
             return;
         }
@@ -306,12 +326,12 @@ class DirPad {
         }
     }
 
-    private void previewBend(String kind) {
+    private void previewBend(String kind, String side) {
         try {
             JSONObject o = new JSONObject();
             o.put("t", "dp");
-            o.put("s", "R");
-            o.put("n", 8);
+            o.put("s", side);
+            o.put("n", kind.startsWith("m") ? 6 : 8);
             o.put("b", kind);
             out.send(o);
         } catch (Exception ignored) {
@@ -337,9 +357,11 @@ class DirPad {
 
     void draw(Canvas c, int w, int h) {
         text.setColor(Color.rgb(150, 150, 165));
-        if ("en".equals(sub)) {
+        if (stroke()) {
             text.setTextSize(16 * dens);
-            c.drawText("英字：どこにでも一筆書き（押さえたまま書くと大文字／両手で同時にトン＝日本語）", w / 2f, 26 * dens, text);
+            c.drawText("en".equals(sub)
+                    ? "英字：どこにでも一筆書き（押さえたまま書くと大文字／両手で同時にトン＝日本語）"
+                    : "修飾キーの後：1文字を一筆書き（トン＝修飾キーだけ／両手で同時にトン＝取り消し）", w / 2f, 26 * dens, text);
         } else {
             paint.setColor(Color.rgb(40, 40, 48));
             paint.setStrokeWidth(dens);
@@ -357,7 +379,7 @@ class DirPad {
         paint.setStrokeCap(Paint.Cap.ROUND);
         for (int i = 0; i < fs.size(); i++) {
             F f = fs.valueAt(i);
-            if ("en".equals(sub)) {
+            if (stroke()) {
                 Path p = new Path();
                 for (int j = 0; j < f.pts.size(); j++) {
                     float[] q = f.pts.get(j);

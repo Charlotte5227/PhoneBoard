@@ -176,7 +176,7 @@ public class PadView extends View {
     public String getMode() { return mode; }
 
     /** 方向入力の画面（ja / num / en） */
-    public void setDirSub(String m) { dir.setSub(m); }
+    public void setDirSub(String m, String in) { dir.setSub(m, in); }
 
     public void setMode(String m) {
         if (m.equals(mode)) return;

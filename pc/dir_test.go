@@ -10,9 +10,13 @@ type dirRec struct{ ops []string }
 
 func (r *dirRec) typeASCII(s string) { r.ops = append(r.ops, s) }
 func (r *dirRec) key(mods []uint16, vk uint16) {
-	n := map[uint16]string{vkTab: "TAB", vkBack: "BS", vkReturn: "ENTER", vkSpace: "SPACE", vkEscape: "ESC", 0x25: "LEFT", 0x26: "UP", 0x27: "RIGHT"}[vk]
-	if len(mods) > 0 {
-		n = "S+" + n
+	n := map[uint16]string{vkTab: "TAB", vkBack: "BS", vkReturn: "ENTER", vkSpace: "SPACE", vkEscape: "ESC", 0x25: "LEFT", 0x26: "UP", 0x27: "RIGHT",
+		0xA2: "CTRL", 0xA0: "SHIFT", 0x5B: "WIN"}[vk]
+	if n == "" {
+		n = string(rune(vk))
+	}
+	for i := len(mods) - 1; i >= 0; i-- {
+		n = map[uint16]string{0xA0: "S", 0xA2: "C", 0x5B: "W"}[mods[i]] + "+" + n
 	}
 	r.ops = append(r.ops, "<"+n+">")
 }
@@ -25,8 +29,14 @@ func (r *dirRec) snd(group string, semi int) {
 }
 func (r *dirRec) echo(s string, warn bool) {}
 func (r *dirRec) toast(s string)           {}
-func (r *dirRec) sub(m string)             { r.ops = append(r.ops, "sub:"+m) }
-func (r *dirRec) take() string             { s := strings.Join(r.ops, ","); r.ops = nil; return s }
+func (r *dirRec) sub(m, in string) {
+	def := map[string]string{"ja": "flick", "num": "flick", "en": "stroke"}[m]
+	if in != def {
+		m += "/" + in
+	}
+	r.ops = append(r.ops, "sub:"+m)
+}
+func (r *dirRec) take() string { s := strings.Join(r.ops, ","); r.ops = nil; return s }
 
 func newDirT(t *testing.T) (*Dir, *dirRec) {
 	rec := &dirRec{}
@@ -228,5 +238,69 @@ func TestStrokeSamplesSelfConsistent(t *testing.T) {
 	}
 	if bad > 0 {
 		t.Fatalf("%d samples misread", bad)
+	}
+}
+
+func TestDirModifiers(t *testing.T) {
+	d, rec := newDirT(t)
+	sh := defaultShapesForTest(t)
+	shape := func(k string) []pt {
+		var out []pt
+		for _, q := range sh[k] {
+			out = append(out, pt{q[0], q[1]})
+		}
+		return out
+	}
+	// 日本語: 音量↓ → ↙から↓（Ctrl）→ 次の1文字は一筆書き → C → Ctrl+C、日本語のはじきに戻る
+	d.ModSelect()
+	d.Flick("R", dDL, false, "mctrl")
+	d.Stroke(shape("C"), false)
+	if got := rec.take(); got != "sub:ja,sub:ja/stroke,<C+C>,sub:ja" {
+		t.Fatalf("ctrl+c: %s", got)
+	}
+	// 重ねる: Ctrl と Shift → Ctrl+Shift+Z（大文字の押さえと重ならない）
+	d.ModSelect()
+	d.Flick("L", dUp, false, "") // 選択中は ↑ だけでも Shift
+	d.ModSelect()
+	d.Flick("R", dDL, false, "mctrl")
+	d.Stroke(shape("Z"), true)
+	if got := rec.take(); got != "sub:ja,sub:ja/stroke,sub:ja,sub:ja/stroke,<S+C+Z>,sub:ja" {
+		t.Fatalf("stack: %s", got)
+	}
+	// 撤回: Win を付けてから、もう一度 Win を選ぶと外れる
+	d.ModSelect()
+	d.Flick("R", dDL, false, "mwin")
+	d.ModSelect()
+	d.Flick("R", dDL, false, "mwin")
+	if got := rec.take(); got != "sub:ja,sub:ja/stroke,sub:ja,sub:ja" {
+		t.Fatalf("toggle: %s", got)
+	}
+	// Win だけ（トン）
+	d.ModSelect()
+	d.Flick("R", dRight, false, "")
+	d.SingleTap()
+	if got := rec.take(); got != "sub:ja,sub:ja/stroke,<WIN>,sub:ja" {
+		t.Fatalf("win alone: %s", got)
+	}
+	// 選択中でなければ ↙ から曲げても普通の ↙（濁点）、トンで全部取り消し
+	d.Flick("L", dUL, false, "")
+	d.Flick("R", dTap, false, "")
+	d.Flick("R", dDL, false, "mctrl")
+	d.ModSelect()
+	d.Flick("R", dDL, false, "mshift")
+	d.ModSelect()
+	d.Flick("R", dTap, false, "")
+	if got := rec.take(); got != "ka,<BS>,ga,sub:ja,sub:ja/stroke,sub:ja,sub:ja" {
+		t.Fatalf("plain/cancel: %s", got)
+	}
+	// 英字画面でも同じ: 音量↓の間ははじきで選ぶ
+	d.Flick("R", dDR, false, "bend")
+	rec.take()
+	d.ModSelect()
+	d.Flick("R", dDown, false, "")
+	d.Stroke(shape("V"), false)
+	d.Stroke(shape("A"), false)
+	if got := rec.take(); got != "sub:en/flick,sub:en,<C+V>,sub:en,a" {
+		t.Fatalf("english: %s", got)
 	}
 }

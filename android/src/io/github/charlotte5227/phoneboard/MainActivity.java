@@ -459,7 +459,7 @@ public class MainActivity extends Activity implements Client.Listener, PadView.H
         } else if ("setmode".equals(t)) {
             pad.setMode(m.optString("m", "mouse"));
         } else if ("dsub".equals(t)) {
-            pad.setDirSub(m.optString("m", "ja"));
+            pad.setDirSub(m.optString("m", "ja"), m.optString("in", ""));
         } else if ("state".equals(t)) {
             pad.setState(m);
         } else if ("click".equals(t)) {
