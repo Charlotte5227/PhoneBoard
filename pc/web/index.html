@@ -304,9 +304,11 @@ function buildForm(sec,key){
   }
 }
 let saveT;
-function saveCfg(){clearTimeout(saveT);saveT=setTimeout(async()=>{try{cfg=await api('/api/config',cfg);flash()}catch(e){alert(e)}},350)}
+// 保存結果は今の設定の入れ物に上書きする（入れ物ごと置き換えると、入力欄が古い入れ物に書き込み続けて保存されなくなる）
+function mergeCfg(dst,src){for(const k of Object.keys(src)){const v=src[k];if(v&&typeof v=='object'&&!Array.isArray(v)&&dst[k]&&typeof dst[k]=='object'&&!Array.isArray(dst[k]))mergeCfg(dst[k],v);else dst[k]=v}return dst}
+function saveCfg(){clearTimeout(saveT);saveT=setTimeout(async()=>{try{const sent=JSON.stringify(cfg);const r=await api('/api/config',JSON.parse(sent));if(JSON.stringify(cfg)===sent)mergeCfg(cfg,r);flash()}catch(e){alert(e)}},350)}
 async function resetCalib(){if(!confirm('タッチ位置の補正をリセットしますか？'))return;status=await api('/api/calib/reset',{});renderStatus();flash('リセットしました')}
-async function newPin(){status=await api('/api/pin/new',{});cfg=await api('/api/config');renderStatus()}
+async function newPin(){status=await api('/api/pin/new',{});mergeCfg(cfg,await api('/api/config'));renderStatus()}
 function renderStatus(){
   $('pin').textContent=status.pin;$('ips').innerHTML=(status.ips||[]).join('<br>')||'（見つかりません）';$('port').textContent=status.port;
   $('conn').textContent=status.connected?'接続中':'未接続';$('conn').className='pill '+(status.connected?'ok':'bad');
