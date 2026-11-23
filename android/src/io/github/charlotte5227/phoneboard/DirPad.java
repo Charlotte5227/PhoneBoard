@@ -38,13 +38,14 @@ class DirPad {
         float seX;                   // ↘ に入ってからの一番右（px）
         float len;                   // なぞった長さ（dp）
         boolean others, holder;      // 英字: 他の指が触れていた（=大文字）/ 大文字用に押さえている指
+        int longHint = -1;           // 「長く引く」を知らせた方向
         final List<float[]> pts = new ArrayList<float[]>();
     }
 
     private final Out out;
     private final float dens;
     String sub = "ja";
-    float flickDp = 16, longDp = 80, bendDp = 30;
+    float flickDp = 16, longDp = 150, bendDp = 30;
     private final SparseArray<F> fs = new SparseArray<F>();
     private long lastTapT0 = -1, lastTapT1 = -1;
     private final Paint paint = new Paint(Paint.ANTI_ALIAS_FLAG);
@@ -117,6 +118,15 @@ class DirPad {
         // 右の親指: ↘（切り替え口）に入った → 音で知らせる。そこから左へ引いたら英字
         if (!f.left) {
             int dir = d >= flickDp ? dirOf(x - f.x0, y - f.y0) : 0;
+            // ← / ↓ を「長く引く」の長さまで引いた → 音で知らせる（離す前に戻せば普通の文字）
+            if (d >= longDp && (dir == 7 || dir == 5) && f.longHint != dir) {
+                f.longHint = dir;
+                previewLong(dir);
+                out.vibrate(20, 220);
+            } else if (d < longDp * 0.85f && f.longHint >= 0) {
+                f.longHint = -1;
+                out.vibrate(8, 120);
+            }
             if (!f.seIn && dir == 4) {
                 f.seIn = true;
                 f.seX = x;
@@ -152,7 +162,8 @@ class DirPad {
             dir = 0;
         } else {
             dir = dirOf(f.farX - f.x0, f.farY - f.y0);
-            lng = f.maxD >= longDp;
+            // 離した位置が十分遠い時だけ「長く引く」（引きすぎたら戻して離せば普通のはじき）
+            lng = Math.hypot(f.x - f.x0, f.y - f.y0) / dens >= longDp;
         }
         try {
             JSONObject o = new JSONObject();
@@ -213,6 +224,18 @@ class DirPad {
             o.put("s", "R");
             o.put("n", dir);
             if (bend) o.put("b", "bend");
+            out.send(o);
+        } catch (Exception ignored) {
+        }
+    }
+
+    private void previewLong(int dir) {
+        try {
+            JSONObject o = new JSONObject();
+            o.put("t", "dp");
+            o.put("s", "R");
+            o.put("n", dir);
+            o.put("z", 1);
             out.send(o);
         } catch (Exception ignored) {
         }

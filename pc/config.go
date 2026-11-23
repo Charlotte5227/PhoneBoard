@@ -82,7 +82,7 @@ type ButtonCfg struct {
 }
 
 // configSchema は設定形式の版。上げると古い既定値を新しい既定値に置き換える。
-const configSchema = 5
+const configSchema = 6
 
 // GameCfg はゲーム画面の設定。
 type GameCfg struct {
@@ -116,7 +116,7 @@ type DirCfg struct {
 func DefaultConfig() *Config {
 	return &Config{
 		Game:        GameCfg{Enabled: false, LookSens: 1.5},
-		Dir:         DirCfg{Enabled: true, FlickDp: 16, LongDp: 80, BendDp: 30},
+		Dir:         DirCfg{Enabled: true, FlickDp: 16, LongDp: 150, BendDp: 30},
 		Schema:      configSchema,
 		Port:        39500,
 		PIN:         randomPIN(),
@@ -222,7 +222,7 @@ func (c *Config) Normalize() {
 	if c.Dir.FlickDp < 6 || c.Dir.FlickDp > 60 {
 		c.Dir.FlickDp = d.Dir.FlickDp
 	}
-	if c.Dir.LongDp < c.Dir.FlickDp+10 || c.Dir.LongDp > 300 {
+	if c.Dir.LongDp < c.Dir.FlickDp+10 || c.Dir.LongDp > 400 {
 		c.Dir.LongDp = math.Max(d.Dir.LongDp, c.Dir.FlickDp+30)
 	}
 	if c.Dir.BendDp < 10 || c.Dir.BendDp > 200 {
@@ -314,6 +314,10 @@ func LoadConfig() *Config {
 		c.Overlay.Width = d.Overlay.Width
 		c.Overlay.Anchor, c.Overlay.PosX, c.Overlay.PosY = d.Overlay.Anchor, d.Overlay.PosX, d.Overlay.PosY
 		c.Buttons.KbVolUp, c.Buttons.KbVolDown = d.Buttons.KbVolUp, d.Buttons.KbVolDown
+	}
+	if c.Schema < 6 && c.Dir.LongDp == 80 {
+		// v2.5.1: 「長く引く」が普通のはじきとぶつかっていたので長めに
+		c.Dir.LongDp = 150
 	}
 	c.Schema = configSchema
 	c.Normalize()

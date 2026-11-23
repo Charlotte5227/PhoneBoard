@@ -632,7 +632,7 @@ func (a *App) Handle(s Sender, m *Msg) {
 		}
 	case "dp": // 方向入力: 切り替え口に入った・曲げた（音で知らせる）
 		if a.mode == "dir" {
-			a.dir.Preview(m.S, m.N, m.B == "bend")
+			a.dir.Preview(m.S, m.N, m.B == "bend", m.Z != 0)
 		}
 	case "ds": // 英字の一筆書き
 		if a.mode == "dir" {

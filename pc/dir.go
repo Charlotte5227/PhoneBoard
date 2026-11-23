@@ -133,9 +133,24 @@ func (d *Dir) setSub(m string, sound bool) {
 
 func (d *Dir) warn() { d.out.snd(SndWarn, 0) }
 
-// Preview は右の親指が切り替え口（↘）に入った時・そこから左へ曲げた時（音で知らせる）。
-func (d *Dir) Preview(side string, dir int, bend bool) {
-	if side != "R" || dir != dDR || d.Sub == "en" {
+// Preview は右の親指が切り替え口（↘）に入った時・そこから左へ曲げた時、
+// 「長く引く」の長さを超えた時（音で知らせる。離す前に戻せば普通のはじきになる）。
+func (d *Dir) Preview(side string, dir int, bend, long bool) {
+	if side != "R" || d.Sub == "en" {
+		return
+	}
+	if long {
+		switch dir {
+		case dLeft:
+			d.out.snd(SndHeavy, 2)
+			d.out.echo("削除？", false)
+		case dDown:
+			d.out.snd(SndHeavy, 8)
+			d.out.echo("確定？", false)
+		}
+		return
+	}
+	if dir != dDR {
 		return
 	}
 	switch {
