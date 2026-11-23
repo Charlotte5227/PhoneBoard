@@ -4,6 +4,8 @@ import android.graphics.Canvas;
 import android.graphics.Color;
 import android.graphics.Paint;
 import android.graphics.Path;
+import android.os.Handler;
+import android.os.Looper;
 import android.os.SystemClock;
 import android.util.SparseArray;
 
@@ -42,6 +44,8 @@ class DirPad {
         float ax, ay;                // ↖ の行き着いた点（曲げの基準）
         float px, py;                // 直前の位置
         String ulKind;               // ↖ から曲げた操作: bs / enter / tab
+        boolean repeated;            // 削除を押さえたまま連続で送った
+        Runnable rep;                // 連続削除のタイマー
         final List<float[]> pts = new ArrayList<float[]>();
     }
 
@@ -49,6 +53,8 @@ class DirPad {
     private final float dens;
     String sub = "ja";
     float flickDp = 16, bendDp = 30;
+    int repeatDelayMs = 450, repeatIntervalMs = 60;
+    private final Handler handler = new Handler(Looper.getMainLooper());
     private final SparseArray<F> fs = new SparseArray<F>();
     private long lastTapT0 = -1, lastTapT1 = -1;
     private final Paint paint = new Paint(Paint.ANTI_ALIAS_FLAG);
@@ -64,15 +70,41 @@ class DirPad {
         if (d == null) return;
         flickDp = (float) d.optDouble("flickDp", flickDp);
         bendDp = (float) d.optDouble("bendDp", bendDp);
+        repeatDelayMs = d.optInt("repeatDelayMs", repeatDelayMs);
+        repeatIntervalMs = Math.max(20, d.optInt("repeatIntervalMs", repeatIntervalMs));
     }
 
     void setSub(String m) {
         sub = m;
-        fs.clear();
+        cancelAll();
         out.redraw();
     }
 
-    void cancelAll() { fs.clear(); }
+    void cancelAll() {
+        for (int i = 0; i < fs.size(); i++) stopRepeat(fs.valueAt(i));
+        fs.clear();
+    }
+
+    private void stopRepeat(F f) {
+        if (f.rep != null) {
+            handler.removeCallbacks(f.rep);
+            f.rep = null;
+        }
+    }
+
+    /** 削除の曲げのまま押さえ続けたら、連続で削除を送る */
+    private void startRepeat(final F f) {
+        stopRepeat(f);
+        f.rep = new Runnable() {
+            public void run() {
+                if (fs.get(f.id) != f || !"bs".equals(f.ulKind)) return;
+                f.repeated = true;
+                sendFlick("R", 8, "bs");
+                handler.postDelayed(this, repeatIntervalMs);
+            }
+        };
+        handler.postDelayed(f.rep, repeatDelayMs);
+    }
 
     /** 方向の番号: 0=トン 1=↑ 2=↗ 3=→ 4=↘ 5=↓ 6=↙ 7=← 8=↖ */
     static int dirOf(float dx, float dy) {
@@ -142,6 +174,8 @@ class DirPad {
                 boolean changed = k == null ? f.ulKind != null : !k.equals(f.ulKind);
                 if (changed) {
                     f.ulKind = k;
+                    if ("bs".equals(k)) startRepeat(f);
+                    else stopRepeat(f);
                     if (k != null) {
                         previewBend(k);
                         out.vibrate(20, 220);
@@ -174,6 +208,8 @@ class DirPad {
         F f = fs.get(id);
         if (f == null) return;
         fs.remove(id);
+        stopRepeat(f);
+        if (f.repeated) return; // 押さえたまま連続で消した → 離した時には何も送らない
         long now = SystemClock.uptimeMillis();
         if ("en".equals(sub)) {
             upEnglish(f, now);
@@ -252,6 +288,19 @@ class DirPad {
             o.put("s", "R");
             o.put("n", dir);
             if (bend) o.put("b", "bend");
+            out.send(o);
+        } catch (Exception ignored) {
+        }
+    }
+
+    private void sendFlick(String side, int dir, String kind) {
+        try {
+            JSONObject o = new JSONObject();
+            o.put("t", "df");
+            o.put("s", side);
+            o.put("n", dir);
+            o.put("z", 0);
+            if (kind != null) o.put("b", kind);
             out.send(o);
         } catch (Exception ignored) {
         }

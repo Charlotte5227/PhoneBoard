@@ -534,9 +534,10 @@ func (a *App) sendCfgLocked() {
 			"longPress": m.LongPress, "longPressMs": m.LongPressMs, "momentum": m.Momentum,
 			"miniMap": a.cfg.Overlay.MiniMap,
 		},
-		"kb":     map[string]any{"cols": b.Cols, "rows": b.Rows, "keys": keys},
-		"game":   map[string]any{"zones": a.lay.GameZones},
-		"dir":    map[string]any{"flickDp": a.cfg.Dir.FlickDp, "bendDp": a.cfg.Dir.BendDp},
+		"kb":   map[string]any{"cols": b.Cols, "rows": b.Rows, "keys": keys},
+		"game": map[string]any{"zones": a.lay.GameZones},
+		"dir": map[string]any{"flickDp": a.cfg.Dir.FlickDp, "bendDp": a.cfg.Dir.BendDp,
+			"repeatDelayMs": a.cfg.Keyboard.RepeatDelayMs, "repeatIntervalMs": a.cfg.Keyboard.RepeatIntervalMs},
 		"haptic": a.cfg.Haptic.Enabled,
 	})
 	a.sendStateLocked()
