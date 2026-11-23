@@ -147,6 +147,9 @@ func (d *Dir) Preview(side string, dir int, bend, long bool) {
 		case dDown:
 			d.out.snd(SndHeavy, 8)
 			d.out.echo("確定？", false)
+		case dRight:
+			d.out.snd(SndHeavy, 11)
+			d.out.echo("Tab？", false)
 		}
 		return
 	}
@@ -209,6 +212,12 @@ func (d *Dir) commonLong(dir int) bool {
 		d.out.snd(SndHeavy, 8)
 		d.out.echo("確定", false)
 		d.comp, d.conv, d.last, d.row, d.word = 0, false, 0, -1, nil
+		return true
+	case dRight:
+		d.out.key(nil, vkTab)
+		d.out.snd(SndHeavy, 11)
+		d.out.echo("Tab", false)
+		d.last, d.row, d.word = 0, -1, nil
 		return true
 	}
 	return false

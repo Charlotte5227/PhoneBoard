@@ -10,7 +10,7 @@ type dirRec struct{ ops []string }
 
 func (r *dirRec) typeASCII(s string) { r.ops = append(r.ops, s) }
 func (r *dirRec) key(mods []uint16, vk uint16) {
-	n := map[uint16]string{vkBack: "BS", vkReturn: "ENTER", vkSpace: "SPACE", vkEscape: "ESC", 0x25: "LEFT", 0x26: "UP", 0x27: "RIGHT"}[vk]
+	n := map[uint16]string{vkTab: "TAB", vkBack: "BS", vkReturn: "ENTER", vkSpace: "SPACE", vkEscape: "ESC", 0x25: "LEFT", 0x26: "UP", 0x27: "RIGHT"}[vk]
 	if len(mods) > 0 {
 		n = "S+" + n
 	}
@@ -132,7 +132,8 @@ func TestDirConvert(t *testing.T) {
 	// 長く引く: ← 削除 / ↓ 確定
 	d.Flick("R", dLeft, true, false)
 	d.Flick("R", dDown, true, false)
-	if got := rec.take(); got != "<BS>,<ENTER>" {
+	d.Flick("R", dRight, true, false)
+	if got := rec.take(); got != "<BS>,<ENTER>,<TAB>" {
 		t.Fatalf("long: %s", got)
 	}
 }

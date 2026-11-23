@@ -118,8 +118,8 @@ class DirPad {
         // 右の親指: ↘（切り替え口）に入った → 音で知らせる。そこから左へ引いたら英字
         if (!f.left) {
             int dir = d >= flickDp ? dirOf(x - f.x0, y - f.y0) : 0;
-            // ← / ↓ を「長く引く」の長さまで引いた → 音で知らせる（離す前に戻せば普通の文字）
-            if (d >= longDp && (dir == 7 || dir == 5) && f.longHint != dir) {
+            // ← / ↓ / → を「長く引く」の長さまで引いた → 音で知らせる（離す前に戻せば普通の文字）
+            if (d >= longDp && (dir == 7 || dir == 5 || dir == 3) && f.longHint != dir) {
                 f.longHint = dir;
                 previewLong(dir);
                 out.vibrate(20, 220);
