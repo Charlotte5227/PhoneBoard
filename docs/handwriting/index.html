@@ -1,0 +1,379 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no">
+<title>PhoneBoard 英字一筆書き 練習</title>
+<style>
+:root{--bg:#f6f5f2;--card:#fff;--fg:#222;--sub:#6b6a66;--line:#d9d7d0;--acc:#5b50c8;--ok:#1d8a62;--ng:#c8463a;--pad:#efeee9}
+@media (prefers-color-scheme:dark){:root{--bg:#1b1b1d;--card:#26262a;--fg:#eee;--sub:#a3a29c;--line:#3a3a40;--acc:#a39cf0;--ok:#4fc79b;--ng:#f08a7e;--pad:#202024}}
+*{box-sizing:border-box}
+html,body{margin:0;background:var(--bg);color:var(--fg);font-family:system-ui,-apple-system,"Hiragino Sans","Yu Gothic UI",sans-serif;font-size:15px}
+header{display:flex;gap:4px;padding:6px;position:sticky;top:0;background:var(--bg);z-index:5;flex-wrap:wrap;align-items:center}
+header b{margin-right:6px;font-size:14px}
+nav button,.btn{border:1px solid var(--line);background:var(--card);color:var(--fg);border-radius:8px;padding:7px 11px;font-size:14px;cursor:pointer}
+nav button.on{background:var(--acc);color:#fff;border-color:var(--acc)}
+.btn.pri{background:var(--acc);color:#fff;border-color:var(--acc)}
+.btn.sm{padding:4px 8px;font-size:13px}
+section{display:none;padding:6px 8px 40px}
+section.on{display:block}
+.pad{width:100%;height:calc(100vh - 215px);height:calc(100dvh - 215px);min-height:190px;background:var(--pad);border:1px solid var(--line);border-radius:12px;touch-action:none;display:block}
+.row{display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin:6px 0}
+.res{display:flex;gap:10px;align-items:center;min-height:64px;margin-bottom:4px}
+.big{font-size:40px;font-weight:600;min-width:56px;text-align:center}
+.sub{color:var(--sub);font-size:13px}
+.out{font-family:ui-monospace,Consolas,monospace;font-size:20px;background:var(--card);border:1px solid var(--line);border-radius:8px;padding:6px 10px;min-height:38px;word-break:break-all;flex:1}
+.target{font-family:ui-monospace,Consolas,monospace;font-size:30px;letter-spacing:4px}
+.target .cur{color:var(--acc);text-decoration:underline}
+.target .done{color:var(--ok)}
+.grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(92px,1fr));gap:8px}
+.card{background:var(--card);border:1px solid var(--line);border-radius:10px;padding:4px;text-align:center;cursor:pointer}
+.card canvas{width:80px;height:80px}
+.card .l{font-weight:600}
+.keys{display:flex;flex-wrap:wrap;gap:4px}
+.keys button{min-width:38px}
+.samples{display:flex;flex-wrap:wrap;gap:6px}
+.samples div{position:relative;background:var(--card);border:1px solid var(--line);border-radius:8px}
+.samples button{position:absolute;right:0;top:0;border:0;background:none;color:var(--ng);font-size:16px;cursor:pointer}
+.toast{position:fixed;left:50%;top:40%;transform:translate(-50%,-50%);background:rgba(0,0,0,.75);color:#fff;padding:12px 20px;border-radius:10px;font-size:18px;opacity:0;transition:opacity .25s;pointer-events:none;z-index:9}
+.toast.on{opacity:1}
+table{border-collapse:collapse;font-size:13px}
+td,th{border:1px solid var(--line);padding:3px 6px;text-align:center}
+textarea{width:100%;height:120px;font-family:ui-monospace,monospace;font-size:11px;background:var(--card);color:var(--fg);border:1px solid var(--line);border-radius:8px}
+label{user-select:none}
+p{line-height:1.6}
+</style>
+</head>
+<body>
+<header>
+  <b>英字一筆書き</b>
+  <nav>
+    <button data-t="practice" class="on">練習</button>
+    <button data-t="shapes">形の一覧</button>
+    <button data-t="register">登録</button>
+    <button data-t="save">保存</button>
+  </nav>
+</header>
+
+<section id="practice" class="on">
+  <div class="row">
+    <label><input type="radio" name="pm" value="free" checked> 自由に書く</label>
+    <label><input type="radio" name="pm" value="quiz"> お題</label>
+    <label><input type="checkbox" id="hideTrail"> 軌跡を隠す（見ないで書く練習）</label>
+    <label><input type="checkbox" id="sound" checked> 音</label>
+  </div>
+  <div class="row" id="quizRow" style="display:none"><span class="target" id="target"></span><button class="btn sm" id="skip">次のお題</button></div>
+  <div class="row" id="freeRow"><div class="out" id="out"></div><button class="btn sm" id="clear">消去</button></div>
+  <div class="res">
+    <div class="big" id="got">–</div>
+    <canvas id="cmp" width="64" height="64" style="width:64px;height:64px"></canvas>
+    <div><div id="info" class="sub">下の枠に1文字を一筆で書いてください</div><div id="fix" class="row"></div></div>
+  </div>
+  <canvas class="pad" id="pad"></canvas>
+  <p class="sub">→ 横に払う=空白 ／ ← 逆に払う=削除 ／ ↙ 斜めに払う=改行。もう片方の指で画面を押さえたまま書くと大文字（PCではShiftを押しながら）。両手の親指で同時にトン=日本語へ戻る（アプリでの動き）。</p>
+</section>
+
+<section id="shapes">
+  <p class="sub">緑の点が書き始め、矢印が書き終わりです。タップするとその文字の登録画面へ。数字は自分で登録した見本の数です。</p>
+  <div class="grid" id="shapeGrid"></div>
+</section>
+
+<section id="register">
+  <div class="keys" id="regKeys"></div>
+  <div class="row"><span>選択中: <b id="regLetter" style="font-size:22px">A</b></span>
+    <label><input type="checkbox" id="useDef" checked> 既定の形も使う</label>
+    <span class="sub" id="regInfo"></span></div>
+  <canvas class="pad" id="regPad" style="height:45vh"></canvas>
+  <div class="samples" id="samples" style="margin-top:6px"></div>
+  <p class="sub">自分の書き方で2〜3回書くと見本として登録されます。既定の形が書きにくい時は「既定の形も使う」を外して、自分の形だけにできます。</p>
+</section>
+
+<section id="save">
+  <p>見本と練習の記録は、このブラウザに自動で保存されています。<b>アプリに反映する時</b>は「ファイルに保存」したファイルを、GitHub のリポジトリの <code>handwriting/</code> フォルダにアップロードするか（Add file → Upload files）、Claude とのチャットに添付してください。</p>
+  <div class="row">
+    <button class="btn pri" id="dl">ファイルに保存</button>
+    <button class="btn" id="copy">コピー</button>
+    <label class="btn">読み込み<input type="file" id="load" accept=".json,application/json" hidden></label>
+    <button class="btn" id="reset">すべて初期化</button>
+  </div>
+  <div class="row"><label>読み取りの厳しさ <input type="range" id="thr" min="0.15" max="0.5" step="0.01"></label><span id="thrv" class="sub"></span></div>
+  <h3>練習の成績</h3>
+  <div id="stats" class="sub">まだ記録がありません</div>
+  <h3>よく取り違える組み合わせ</h3>
+  <div id="conf" class="sub">まだ記録がありません</div>
+  <details><summary class="sub">保存される中身（JSON）</summary><textarea id="json" readonly></textarea></details>
+</section>
+
+<div class="toast" id="toast"></div>
+
+<script>
+"use strict";
+// ===== 既定の形（0〜100の枠、yは下向き） =====
+function arc(cx,cy,r,a0,a1,n){const p=[];n=n||24;for(let i=0;i<=n;i++){const a=(a0+(a1-a0)*i/n)*Math.PI/180;p.push([cx+r*Math.cos(a),cy+r*Math.sin(a)])}return p}
+const DEFS={
+A:[[0,100],[50,0],[100,100]],
+B:[[5,5],[60,0],[85,15],[80,35],[40,50],[85,62],[90,85],[60,100],[5,95]],
+C:arc(50,50,50,-45,-315),
+D:[[0,0],[0,100],[55,95],[90,70],[95,40],[70,10],[10,0]],
+E:[[95,5],[40,0],[15,15],[20,35],[55,50],[15,62],[10,85],[40,100],[95,95]],
+F:[[100,0],[0,0],[0,100]],
+G:arc(50,50,50,-45,-360).concat([[55,50]]),
+H:[[0,0],[0,100],[0,60],[20,45],[60,40],[85,55],[90,100]],
+I:[[50,0],[50,100]],
+J:[[70,0],[70,80],[50,100],[20,95],[5,75]],
+K:[[90,0],[10,50],[90,100]],
+L:[[0,0],[0,100],[70,100]],
+M:[[0,100],[0,0],[50,60],[100,0],[100,100]],
+N:[[0,100],[0,0],[100,100],[100,0]],
+O:arc(50,50,50,-90,-450),
+P:[[0,100],[0,0],[60,0],[90,15],[90,35],[60,50],[0,50]],
+Q:arc(50,50,50,-90,-450).concat([[100,100]]),
+R:[[0,100],[0,0],[60,0],[90,15],[90,35],[60,50],[0,50],[90,100]],
+S:[[90,10],[60,0],[20,5],[5,25],[30,45],[70,55],[95,75],[80,95],[40,100],[5,90]],
+T:[[0,0],[90,0],[90,100]],
+U:[[0,0],[0,70],[20,100],[80,100],[100,70],[100,0]],
+V:[[0,0],[50,100],[100,0]],
+W:[[0,0],[25,100],[50,30],[75,100],[100,0]],
+X:[[100,0],[0,100],[0,0],[100,100]],
+Y:[[0,0],[45,50],[90,0],[30,100]],
+Z:[[0,0],[100,0],[0,100],[100,100]],
+" ":[[0,50],[100,50]],
+"BS":[[100,50],[0,50]],
+"ENTER":[[100,0],[0,100]]
+};
+const KEYS=Object.keys(DEFS);
+const LABEL=k=>k===" "?"空白":k==="BS"?"削除":k==="ENTER"?"改行":k;
+
+// ===== 判定（$1 Unistroke 方式・回転はほぼ無視しない） =====
+const N=64;
+function plen(p){let d=0;for(let i=1;i<p.length;i++)d+=Math.hypot(p[i][0]-p[i-1][0],p[i][1]-p[i-1][1]);return d}
+function resample(pts,n){
+  const src=pts.map(p=>[p[0],p[1]]);const I=plen(src)/(n-1);let D=0;const out=[src[0].slice()];
+  if(I===0){while(out.length<n)out.push(src[0].slice());return out}
+  for(let i=1;i<src.length;i++){
+    const d=Math.hypot(src[i][0]-src[i-1][0],src[i][1]-src[i-1][1]);
+    if(D+d>=I&&d>0){const t=(I-D)/d;const q=[src[i-1][0]+t*(src[i][0]-src[i-1][0]),src[i-1][1]+t*(src[i][1]-src[i-1][1])];out.push(q);src.splice(i,0,q);D=0}
+    else D+=d;
+  }
+  while(out.length<n)out.push(src[src.length-1].slice());
+  return out.slice(0,n);
+}
+function normalize(pts){
+  const r=resample(pts,N);let cx=0,cy=0,x0=1e9,x1=-1e9,y0=1e9,y1=-1e9;
+  for(const p of r){cx+=p[0];cy+=p[1];x0=Math.min(x0,p[0]);x1=Math.max(x1,p[0]);y0=Math.min(y0,p[1]);y1=Math.max(y1,p[1])}
+  cx/=N;cy/=N;const s=Math.max(x1-x0,y1-y0)||1;
+  return r.map(p=>[(p[0]-cx)/s,(p[1]-cy)/s]);
+}
+function rotate(p,a){const c=Math.cos(a),s=Math.sin(a);return p.map(q=>[q[0]*c-q[1]*s,q[0]*s+q[1]*c])}
+function dist(a,b){let d=0;for(let i=0;i<N;i++)d+=Math.hypot(a[i][0]-b[i][0],a[i][1]-b[i][1]);return d/N}
+const ANG=[-0.26,-0.13,0,0.13,0.26]; // ±15°だけ傾きを許す
+function templates(){
+  const t=[];
+  for(const k of KEYS){
+    const L=data.letters[k]||{};
+    if(L.useDefault!==false)t.push({k,p:DEF_N[k],own:false});
+    for(const s of (L.samples||[]))t.push({k,p:s,own:true});
+  }
+  return t;
+}
+function recognize(pts){
+  const c=normalize(pts);const rots=ANG.map(a=>rotate(c,a));
+  const best={};
+  for(const t of templates()){
+    let d=1e9;for(const r of rots)d=Math.min(d,dist(r,t.p));
+    if(!(t.k in best)||d<best[t.k].d)best[t.k]={k:t.k,d,p:t.p};
+  }
+  return {norm:c,list:Object.values(best).sort((a,b)=>a.d-b.d)};
+}
+const DEF_N={};for(const k of KEYS)DEF_N[k]=normalize(DEFS[k]);
+
+// ===== 保存 =====
+const STORE="pb-strokes-v1";
+let data=blank();
+function blank(){const d={format:"phoneboard-strokes",version:1,threshold:0.30,letters:{},stats:{},confusion:{}};return d}
+try{const s=localStorage.getItem(STORE);if(s){const o=JSON.parse(s);if(o&&o.format==="phoneboard-strokes")data=Object.assign(blank(),o)}}catch(e){}
+function persist(){try{localStorage.setItem(STORE,JSON.stringify(data))}catch(e){}}
+function exportObj(){
+  const r=(v)=>Math.round(v*1000)/1000;
+  const letters={};
+  for(const k of KEYS){const L=data.letters[k];if(L&&(L.useDefault===false||(L.samples&&L.samples.length)))letters[k]={useDefault:L.useDefault!==false,samples:(L.samples||[]).map(s=>s.map(p=>[r(p[0]),r(p[1])]))}}
+  return {format:"phoneboard-strokes",version:1,saved:new Date().toISOString(),
+    recognizer:{method:"$1 unistroke (no rotation normalisation, ±15° search)",points:N,normalize:"centroid, uniform scale by max(w,h)"},
+    threshold:data.threshold,defaultShapes:DEFS,letters,stats:data.stats,confusion:data.confusion};
+}
+
+// ===== 音 =====
+let ac=null;
+function beep(freq,ms,type,vol){
+  if(!$("sound").checked)return;
+  try{ac=ac||new (window.AudioContext||window.webkitAudioContext)();const o=ac.createOscillator(),g=ac.createGain();
+  o.type=type||"sine";o.frequency.value=freq;g.gain.setValueAtTime(vol||0.15,ac.currentTime);g.gain.exponentialRampToValueAtTime(0.0001,ac.currentTime+ms/1000);
+  o.connect(g);g.connect(ac.destination);o.start();o.stop(ac.currentTime+ms/1000)}catch(e){}
+}
+function okSound(k){const i=Math.max(0,"ABCDEFGHIJKLMNOPQRSTUVWXYZ".indexOf(k));beep(520*Math.pow(2,i/26),90,"triangle")}
+function ngSound(){beep(150,220,"square",0.08)}
+
+// ===== 共通 =====
+function $(id){return document.getElementById(id)}
+let toastT=0;function toast(s){const t=$("toast");t.textContent=s;t.classList.add("on");clearTimeout(toastT);toastT=setTimeout(()=>t.classList.remove("on"),900)}
+document.querySelectorAll("nav button").forEach(b=>b.onclick=()=>{
+  document.querySelectorAll("nav button").forEach(x=>x.classList.toggle("on",x===b));
+  document.querySelectorAll("section").forEach(s=>s.classList.toggle("on",s.id===b.dataset.t));
+  if(b.dataset.t==="shapes")drawShapes();if(b.dataset.t==="register")drawReg();if(b.dataset.t==="save")drawSave();
+  fit();
+});
+function drawShape(cv,pts,col){
+  const g=cv.getContext("2d"),W=cv.width,H=cv.height;g.clearRect(0,0,W,H);
+  let x0=1e9,x1=-1e9,y0=1e9,y1=-1e9;for(const p of pts){x0=Math.min(x0,p[0]);x1=Math.max(x1,p[0]);y0=Math.min(y0,p[1]);y1=Math.max(y1,p[1])}
+  const s=(Math.min(W,H)*0.72)/(Math.max(x1-x0,y1-y0)||1),ox=W/2-(x0+x1)/2*s,oy=H/2-(y0+y1)/2*s;
+  const P=pts.map(p=>[ox+p[0]*s,oy+p[1]*s]);
+  g.lineWidth=Math.max(2,W/30);g.lineCap="round";g.lineJoin="round";g.strokeStyle=col||getComputedStyle(document.body).getPropertyValue("--fg");
+  g.beginPath();P.forEach((p,i)=>i?g.lineTo(p[0],p[1]):g.moveTo(p[0],p[1]));g.stroke();
+  const a=P[P.length-1];let b=P[P.length-2]||P[0];for(let i=P.length-2;i>=0&&Math.hypot(a[0]-P[i][0],a[1]-P[i][1])<W/12;i--)b=P[i];
+  const ang=Math.atan2(a[1]-b[1],a[0]-b[0]),L=W/9;g.beginPath();g.moveTo(a[0],a[1]);g.lineTo(a[0]-L*Math.cos(ang-0.5),a[1]-L*Math.sin(ang-0.5));
+  g.moveTo(a[0],a[1]);g.lineTo(a[0]-L*Math.cos(ang+0.5),a[1]-L*Math.sin(ang+0.5));g.stroke();
+  g.fillStyle="#1d9e75";g.beginPath();g.arc(P[0][0],P[0][1],Math.max(3,W/18),0,7);g.fill();
+}
+
+// ===== 書く場所（複数の指に対応） =====
+function makePad(cv,onStroke){
+  const ptrs=new Map();let recent=[];let fadeT=0;
+  const g=cv.getContext("2d");
+  function clear(){g.clearRect(0,0,cv.width,cv.height)}
+  cv.addEventListener("pointerdown",e=>{
+    cv.setPointerCapture(e.pointerId);
+    ptrs.set(e.pointerId,{pts:[[e.offsetX,e.offsetY]],t0:performance.now(),others:ptrs.size>0||e.shiftKey});
+    for(const p of ptrs.values())if(ptrs.size>1)p.others=true;
+    clearTimeout(fadeT);if(ptrs.size===1)clear();
+  });
+  cv.addEventListener("pointermove",e=>{
+    const p=ptrs.get(e.pointerId);if(!p)return;
+    const q=[e.offsetX,e.offsetY],l=p.pts[p.pts.length-1];p.pts.push(q);if(e.shiftKey)p.others=true;
+    if(!$("hideTrail").checked||cv.id!=="pad"){g.strokeStyle=getComputedStyle(document.body).getPropertyValue("--acc");g.lineWidth=5;g.lineCap="round";g.beginPath();g.moveTo(l[0]*dpr,l[1]*dpr);g.lineTo(q[0]*dpr,q[1]*dpr);g.stroke()}
+  });
+  function up(e){
+    const p=ptrs.get(e.pointerId);if(!p)return;ptrs.delete(e.pointerId);
+    const now=performance.now(),len=plen(p.pts);
+    if(p.holder)return; // 大文字のために押さえていた指
+    if(len<14){ // トン
+      recent=recent.filter(r=>now-r.t1<400);
+      const pair=recent.find(r=>Math.abs(r.t0-p.t0)<220);
+      if(pair){recent=[];onStroke({twoTap:true});return}
+      recent.push({t0:p.t0,t1:now});return;
+    }
+    for(const o of ptrs.values())o.holder=true;
+    onStroke({pts:p.pts,upper:p.others||ptrs.size>0||e.shiftKey});
+    fadeT=setTimeout(clear,500);
+  }
+  cv.addEventListener("pointerup",up);cv.addEventListener("pointercancel",e=>ptrs.delete(e.pointerId));
+}
+let dpr=window.devicePixelRatio||1;
+function fit(){for(const id of ["pad","regPad"]){const c=$(id);const r=c.getBoundingClientRect();if(r.width){c.width=r.width*dpr;c.height=r.height*dpr}}}
+window.addEventListener("resize",fit);
+
+// ===== 練習 =====
+const WORDS="the and you that was for are with his they this have from one had word but not what all were when your can said there use each which she how their will other about out many then them these some her would make like him into time has look two more write see number way could people than first water been call who oil now find long down day did get come made may part over new sound take only little work know place year live back give most very after thing our just name good sentence man think say great where help through much before line right too mean old any same tell boy follow came want show also around form three small set put end does another well large must big even such because turn here why ask went men read need land different home move try kind hand picture again change off play spell air away animal house point page letter mother answer found study still learn should world high every near add food between own below country plant last school father keep tree never start city earth eye light thought head under story saw left few while along might close something seem next hard open example begin life always those both paper together got group often run important until children side feet car mile night walk white sea began grow took river four carry state once book hear stop without second later miss idea enough eat face watch far really almost let above girl sometimes mountain cut young talk soon list song being leave family quick zone jazz quiz box".split(" ");
+let mode="free",target="",ti=0,lastOut=null;
+document.querySelectorAll("input[name=pm]").forEach(r=>r.onchange=()=>{mode=r.value;$("quizRow").style.display=mode==="quiz"?"":"none";$("freeRow").style.display=mode==="free"?"":"none";if(mode==="quiz")newWord()});
+function newWord(){target=WORDS[Math.floor(Math.random()*WORDS.length)].toUpperCase();ti=0;showTarget()}
+function showTarget(){$("target").innerHTML=[...target].map((c,i)=>`<span class="${i<ti?"done":i===ti?"cur":""}">${c}</span>`).join("")}
+$("skip").onclick=newWord;$("clear").onclick=()=>{$("out").textContent="";lastOut=null};
+function stat(k,ok,got){const s=data.stats[k]||(data.stats[k]={n:0,ok:0});s.n++;if(ok)s.ok++;else if(got){const c=data.confusion[k]||(data.confusion[k]={});c[got]=(c[got]||0)+1}persist()}
+function addSample(k,norm){const L=data.letters[k]||(data.letters[k]={useDefault:true,samples:[]});L.samples=L.samples||[];L.samples.push(norm);if(L.samples.length>8)L.samples.shift();persist()}
+function typeKey(k,upper){
+  const o=$("out");
+  if(k==="BS")o.textContent=o.textContent.slice(0,-1);
+  else if(k==="ENTER")o.textContent+="⏎";
+  else if(k===" ")o.textContent+="␣";
+  else o.textContent+=upper?k:k.toLowerCase();
+}
+makePad($("pad"),ev=>{
+  if(ev.twoTap){toast("日本語へ戻る");beep(880,80);setTimeout(()=>beep(660,120),90);return}
+  const r=recognize(ev.pts),b=r.list[0],s2=r.list[1];
+  const cmp=$("cmp");drawShape(cmp,r.norm,"#999");
+  const fix=$("fix");fix.innerHTML="";
+  if(!b||b.d>data.threshold){
+    $("got").textContent="?";$("info").textContent=b?`読めませんでした（一番近いのは ${LABEL(b.k)}、ずれ ${b.d.toFixed(2)}）`:"見本がありません";ngSound();
+    if(mode==="quiz"){stat(target[ti],false,null)}
+    offerFix(r,null);return;
+  }
+  const g=cmp.getContext("2d");g.globalAlpha=.8;drawOver(cmp,b.p);
+  const unsure=s2&&s2.d-b.d<0.025;
+  $("got").textContent=LABEL(b.k).length>1?LABEL(b.k):(ev.upper?b.k:b.k.toLowerCase());
+  $("info").textContent=`自信 ${Math.round(Math.max(0,1-b.d/data.threshold)*100)}%`+(s2?`　2番目: ${LABEL(s2.k)}${unsure?"（迷い）":""}`:"")+(ev.upper?"　大文字":"");
+  if(mode==="quiz"){
+    const want=target[ti];
+    if(b.k===want){stat(want,true);okSound(b.k);ti++;if(ti>=target.length){toast("○ "+target);setTimeout(newWord,500)}showTarget()}
+    else{stat(want,false,b.k);ngSound();offerFix(r,want)}
+  }else{okSound(b.k);typeKey(b.k,ev.upper);lastOut={k:b.k,upper:ev.upper};offerFix(r,null)}
+});
+function drawOver(cv,p){
+  const g=cv.getContext("2d"),W=cv.width;g.strokeStyle=getComputedStyle(document.body).getPropertyValue("--acc");g.lineWidth=2;
+  g.beginPath();p.forEach((q,i)=>{const x=W/2+q[0]*W*0.72,y=W/2+q[1]*W*0.72;i?g.lineTo(x,y):g.moveTo(x,y)});g.stroke();
+}
+function offerFix(r,want){
+  const fix=$("fix");fix.innerHTML="";
+  if(want){const b=document.createElement("button");b.className="btn sm";b.textContent=`今のを「${LABEL(want)}」として登録`;b.onclick=()=>{addSample(want,r.norm);toast(LABEL(want)+" に登録");fix.innerHTML=""};fix.appendChild(b);return}
+  const sp=document.createElement("span");sp.className="sub";sp.textContent="違う？";fix.appendChild(sp);
+  for(const c of r.list.slice(1,4)){const b=document.createElement("button");b.className="btn sm";b.textContent=LABEL(c.k);b.onclick=()=>correct(r,c.k);fix.appendChild(b)}
+  const sel=document.createElement("select");sel.innerHTML="<option value=''>他…</option>"+KEYS.map(k=>`<option value="${k}">${LABEL(k)}</option>`).join("");
+  sel.onchange=()=>sel.value&&correct(r,sel.value);fix.appendChild(sel);
+}
+function correct(r,k){
+  if(lastOut&&mode==="free"){const o=$("out");if(lastOut.k==="BS"){}else o.textContent=o.textContent.slice(0,-1);typeKey(k,lastOut.upper)}
+  if(r.list[0]&&r.list[0].d<=data.threshold)stat(k,false,r.list[0].k);
+  addSample(k,r.norm);toast(`「${LABEL(k)}」の見本に追加しました`);$("fix").innerHTML="";$("got").textContent=LABEL(k);
+}
+
+// ===== 形の一覧 =====
+function drawShapes(){
+  const g=$("shapeGrid");g.innerHTML="";
+  for(const k of KEYS){
+    const L=data.letters[k]||{};const d=document.createElement("div");d.className="card";
+    const c=document.createElement("canvas");c.width=160;c.height=160;
+    const n=(L.samples||[]).length;
+    d.innerHTML=`<div class="l">${LABEL(k)}</div>`;d.appendChild(c);
+    const s=document.createElement("div");s.className="sub";s.textContent=(L.useDefault===false?"自分の形のみ・":"")+"見本 "+n;d.appendChild(s);
+    d.onclick=()=>{regKey=k;document.querySelector("nav button[data-t=register]").click()};
+    g.appendChild(d);
+    drawShape(c,L.useDefault===false&&n?L.samples[n-1]:DEFS[k]);
+  }
+}
+
+// ===== 登録 =====
+let regKey="A";
+function drawReg(){
+  $("regKeys").innerHTML="";
+  for(const k of KEYS){const b=document.createElement("button");b.className="btn sm"+(k===regKey?" pri":"");b.textContent=LABEL(k);b.onclick=()=>{regKey=k;drawReg()};$("regKeys").appendChild(b)}
+  $("regLetter").textContent=LABEL(regKey);
+  const L=data.letters[regKey]||{};$("useDef").checked=L.useDefault!==false;
+  const sm=$("samples");sm.innerHTML="";
+  const dv=document.createElement("div");const dc=document.createElement("canvas");dc.width=dc.height=72;dv.appendChild(dc);dv.title="既定の形";sm.appendChild(dv);drawShape(dc,DEFS[regKey],"#888");
+  (L.samples||[]).forEach((s,i)=>{const d=document.createElement("div");const c=document.createElement("canvas");c.width=c.height=72;d.appendChild(c);
+    const x=document.createElement("button");x.textContent="×";x.onclick=()=>{L.samples.splice(i,1);persist();drawReg()};d.appendChild(x);sm.appendChild(d);drawShape(c,s)});
+  $("regInfo").textContent=`見本 ${(L.samples||[]).length} 個（左端の灰色は既定の形）`;
+}
+$("useDef").onchange=()=>{const L=data.letters[regKey]||(data.letters[regKey]={samples:[]});L.useDefault=$("useDef").checked;persist()};
+makePad($("regPad"),ev=>{if(ev.twoTap)return;const r=recognize(ev.pts);addSample(regKey,r.norm);
+  const b=r.list[0];toast(b&&b.k===regKey?"登録（既存の判定でも正解）":`登録（今までなら「${b?LABEL(b.k):"?"}」と読んでいた）`);drawReg()});
+
+// ===== 保存 =====
+function drawSave(){
+  $("thr").value=data.threshold;$("thrv").textContent=data.threshold.toFixed(2)+"（小さいほど厳しい＝読めない時は入れない）";
+  const ks=Object.keys(data.stats).sort();
+  $("stats").innerHTML=ks.length?"<table><tr><th>文字</th><th>回数</th><th>正解率</th></tr>"+ks.map(k=>{const s=data.stats[k];return `<tr><td>${LABEL(k)}</td><td>${s.n}</td><td>${Math.round(s.ok/s.n*100)}%</td></tr>`}).join("")+"</table>":"まだ記録がありません";
+  const cs=[];for(const a in data.confusion)for(const b in data.confusion[a])cs.push([a,b,data.confusion[a][b]]);cs.sort((x,y)=>y[2]-x[2]);
+  $("conf").innerHTML=cs.length?"<table><tr><th>書こうとした</th><th>読まれた</th><th>回数</th></tr>"+cs.slice(0,15).map(c=>`<tr><td>${LABEL(c[0])}</td><td>${LABEL(c[1])}</td><td>${c[2]}</td></tr>`).join("")+"</table>":"まだ記録がありません";
+  $("json").value=JSON.stringify(exportObj());
+}
+$("thr").oninput=()=>{data.threshold=+$("thr").value;persist();drawSave()};
+$("dl").onclick=()=>{const b=new Blob([JSON.stringify(exportObj(),null,1)],{type:"application/json"});const a=document.createElement("a");a.href=URL.createObjectURL(b);
+  a.download="phoneboard-strokes-"+new Date().toISOString().slice(0,10)+".json";document.body.appendChild(a);a.click();a.remove()};
+$("copy").onclick=async()=>{try{await navigator.clipboard.writeText(JSON.stringify(exportObj()));toast("コピーしました")}catch(e){$("json").select();toast("JSONを選択しました")}};
+$("load").onchange=async e=>{const f=e.target.files[0];if(!f)return;try{const o=JSON.parse(await f.text());if(o.format!=="phoneboard-strokes")throw 0;
+  data=Object.assign(blank(),{threshold:o.threshold||0.3,letters:o.letters||{},stats:o.stats||{},confusion:o.confusion||{}});persist();drawSave();toast("読み込みました")}catch(err){toast("読み込めませんでした")}};
+$("reset").onclick=()=>{if(confirm("見本と記録をすべて消します。よろしいですか？")){data=blank();persist();drawSave();toast("初期化しました")}};
+fit();
+</script>
+</body>
+</html>
