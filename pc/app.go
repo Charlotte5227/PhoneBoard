@@ -632,7 +632,7 @@ func (a *App) Handle(s Sender, m *Msg) {
 		a.refreshOverlayLocked()
 	case "df": // 方向入力: はじき1回
 		if a.mode == "dir" {
-			a.dir.Flick(m.S, m.N, m.Z != 0, m.B)
+			a.dir.Flick(m.S, m.N, m.A == "rep", m.B)
 			a.vib("commit")
 		}
 	case "dp": // 方向入力: 切り替え口に入った・曲げた（音で知らせる）

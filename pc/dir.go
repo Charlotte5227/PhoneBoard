@@ -109,6 +109,9 @@ type Dir struct {
 
 	mods      []string // 付けている修飾キー（ctrl / shift / win）。次の1文字に付く
 	selecting bool     // 音量↓を押して修飾キーを選んでいるところ
+	repMods   []uint16 // 矢印を押さえ続けている間の修飾キー
+	repLab    string
+	repSet    bool
 }
 
 var (
@@ -124,7 +127,7 @@ func (d *Dir) inputKind() string {
 	if d.selecting {
 		return "flick"
 	}
-	if d.Sub == "en" || len(d.mods) > 0 {
+	if d.Sub == "en" || (len(d.mods) > 0 && d.Sub != "cur") { // 矢印画面では修飾キーは次の矢印に付く
 		return "stroke"
 	}
 	return "flick"
@@ -188,7 +191,11 @@ func (d *Dir) modChoose(dir int, bend string) {
 			d.out.echo(d.modLabel(), false)
 		}
 		if len(d.mods) > 0 {
-			d.out.toast(d.modLabel() + "（次の1文字を一筆書き）")
+			if d.Sub == "cur" {
+				d.out.toast(d.modLabel() + "（次の矢印）")
+			} else {
+				d.out.toast(d.modLabel() + "（次の1文字を一筆書き）")
+			}
 		} else {
 			d.out.toast("修飾キーなし")
 		}
@@ -261,10 +268,10 @@ func (d *Dir) setSub(m string, sound bool) {
 	d.Sub = m
 	d.out.setIME(m == "ja")
 	d.notify()
-	name := map[string]string{"ja": "日本語", "num": "数字", "en": "英字"}[m]
+	name := map[string]string{"ja": "日本語", "num": "数字", "en": "英字", "cur": "矢印"}[m]
 	d.out.toast(name)
 	if sound {
-		d.out.snd(SndMod, map[string]int{"ja": 4, "num": 7, "en": 11}[m])
+		d.out.snd(SndMod, map[string]int{"ja": 4, "num": 7, "en": 11, "cur": 1}[m])
 	}
 }
 
@@ -307,6 +314,9 @@ func (d *Dir) Preview(side string, dir int, bend string) {
 	case bend == "bend":
 		d.out.snd(SndMod, 11)
 		d.out.echo("英字", false)
+	case bend == "bendup":
+		d.out.snd(SndMod, 1)
+		d.out.echo("矢印", false)
 	case d.Sub == "ja":
 		d.out.snd(SndMod, 7)
 		d.out.echo("数字", false)
@@ -316,8 +326,10 @@ func (d *Dir) Preview(side string, dir int, bend string) {
 	}
 }
 
-// Flick ははじき1回（指を離した時）。bend: "bend"=↘から左へ, "bs"/"enter"/"tab"=↖から曲げた
-func (d *Dir) Flick(side string, dir int, long bool, bend string) {
+// Flick ははじき1回（指を離した時）。
+// bend: "bend"=↘から左へ, "bendup"=↘から上へ, "bs"/"enter"/"tab"=↖から曲げた, "m…"=↙から曲げた
+// rep: 矢印画面で押さえ続けた時の2回目以降
+func (d *Dir) Flick(side string, dir int, rep bool, bend string) {
 	if dir < 0 || dir > 8 {
 		return
 	}
@@ -339,10 +351,71 @@ func (d *Dir) Flick(side string, dir int, long bool, bend string) {
 		if side == "L" {
 			d.jaLeft(dir)
 		} else {
-			d.jaRight(dir, long, bend)
+			d.jaRight(dir, bend)
 		}
 	case "num":
-		d.numFlick(side, dir, long, bend)
+		d.numFlick(side, dir, bend)
+	case "cur":
+		d.curFlick(side, dir, rep, bend)
+	}
+}
+
+// switchTo は切り替え口（右 ↘）の行き先: 曲げなし=戻る先, ←=英字, ↑=矢印
+func (d *Dir) switchTo(plain, bend string) {
+	to := plain
+	switch bend {
+	case "bend":
+		to = "en"
+	case "bendup":
+		to = "cur"
+	}
+	if to == d.Sub {
+		to = "ja"
+	}
+	d.setSub(to, true)
+}
+
+// ----- 矢印 -----
+
+var (
+	curRight = map[int]struct {
+		vk  uint16
+		lab string
+	}{dUp: {0x26, "↑"}, dDown: {0x28, "↓"}, dLeft: {0x25, "←"}, dRight: {0x27, "→"}}
+	curLeft = map[int]struct {
+		vk  uint16
+		lab string
+	}{dLeft: {0x24, "Home"}, dRight: {0x23, "End"}, dUp: {0x21, "PgUp"}, dDown: {0x22, "PgDn"}}
+)
+
+func (d *Dir) curFlick(side string, dir int, rep bool, bend string) {
+	if side == "R" && dir == dDR {
+		d.switchTo("ja", bend)
+		return
+	}
+	m := curRight
+	if side == "L" {
+		m = curLeft
+	}
+	k, ok := m[dir]
+	if !ok {
+		d.warn()
+		return
+	}
+	// 修飾キーは次の1回に付く。押さえ続けている間（rep）は同じ修飾キーのまま
+	if !rep || !d.repSet {
+		d.repMods = d.modVKs(false)
+		d.repLab = d.modLabel()
+		d.repSet = true
+		if len(d.mods) > 0 {
+			d.mods = nil
+			d.notify()
+		}
+	}
+	d.out.key(d.repMods, k.vk)
+	d.out.snd(SndFunc, map[int]int{dUp: 9, dDown: 3, dLeft: 5, dRight: 7}[dir])
+	if !rep {
+		d.out.echo(d.repLab+k.lab, false)
 	}
 }
 
@@ -412,12 +485,9 @@ func (d *Dir) jaLeft(dir int) {
 	d.out.echo(string(dirRowName[d.row])+"行", false)
 }
 
-func (d *Dir) jaRight(dir int, long bool, bend string) {
-	if long && d.commonLong(dir) {
-		return
-	}
+func (d *Dir) jaRight(dir int, bend string) {
 	if dir == dDR { // 切り替え口
-		d.setSub(map[bool]string{true: "en", false: "num"}[bend == "bend"], true)
+		d.switchTo("num", bend)
 		return
 	}
 	if d.conv && d.row < 0 {
@@ -565,12 +635,9 @@ func (d *Dir) convert() {
 
 // ----- 数字 -----
 
-func (d *Dir) numFlick(side string, dir int, long bool, bend string) {
-	if side == "R" && long && d.commonLong(dir) {
-		return
-	}
+func (d *Dir) numFlick(side string, dir int, bend string) {
 	if side == "R" && dir == dDR {
-		d.setSub(map[bool]string{true: "en", false: "ja"}[bend == "bend"], true)
+		d.switchTo("ja", bend)
 		return
 	}
 	var s string

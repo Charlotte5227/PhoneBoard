@@ -10,7 +10,7 @@ type dirRec struct{ ops []string }
 
 func (r *dirRec) typeASCII(s string) { r.ops = append(r.ops, s) }
 func (r *dirRec) key(mods []uint16, vk uint16) {
-	n := map[uint16]string{vkTab: "TAB", vkBack: "BS", vkReturn: "ENTER", vkSpace: "SPACE", vkEscape: "ESC", 0x25: "LEFT", 0x26: "UP", 0x27: "RIGHT",
+	n := map[uint16]string{0x24: "HOME", 0x23: "END", 0x21: "PGUP", 0x22: "PGDN", 0x28: "DOWN", vkTab: "TAB", vkBack: "BS", vkReturn: "ENTER", vkSpace: "SPACE", vkEscape: "ESC", 0x25: "LEFT", 0x26: "UP", 0x27: "RIGHT",
 		0xA2: "CTRL", 0xA0: "SHIFT", 0x5B: "WIN"}[vk]
 	if n == "" {
 		n = string(rune(vk))
@@ -30,7 +30,7 @@ func (r *dirRec) snd(group string, semi int) {
 func (r *dirRec) echo(s string, warn bool) {}
 func (r *dirRec) toast(s string)           {}
 func (r *dirRec) sub(m, in string) {
-	def := map[string]string{"ja": "flick", "num": "flick", "en": "stroke"}[m]
+	def := map[string]string{"ja": "flick", "num": "flick", "en": "stroke", "cur": "flick"}[m]
 	if in != def {
 		m += "/" + in
 	}
@@ -302,5 +302,43 @@ func TestDirModifiers(t *testing.T) {
 	d.Stroke(shape("A"), false)
 	if got := rec.take(); got != "sub:en/flick,sub:en,<C+V>,sub:en,a" {
 		t.Fatalf("english: %s", got)
+	}
+}
+
+func TestDirCursor(t *testing.T) {
+	d, rec := newDirT(t)
+	d.Flick("R", dDR, false, "bendup") // ↘ から ↑ → 矢印
+	if got := rec.take(); got != "ime:false,sub:cur" {
+		t.Fatalf("to cur: %s", got)
+	}
+	for _, v := range []int{dUp, dDown, dLeft, dRight} {
+		d.Flick("R", v, false, "")
+	}
+	for _, v := range []int{dLeft, dRight, dUp, dDown} {
+		d.Flick("L", v, false, "")
+	}
+	d.Flick("R", dUL, false, "bs") // ↖ からの曲げはそのまま
+	d.Flick("R", dTap, false, "")  // 何もないところ
+	if got := rec.take(); got != "<UP>,<DOWN>,<LEFT>,<RIGHT>,<HOME>,<END>,<PGUP>,<PGDN>,<BS>,!warn" {
+		t.Fatalf("keys: %s", got)
+	}
+	// Shift を付けて → を押さえ続ける（範囲選択）。離して次の → は普通
+	d.ModSelect()
+	d.Flick("R", dUp, false, "") // 選択中の ↑ = Shift
+	d.Flick("R", dRight, false, "")
+	d.Flick("R", dRight, true, "")
+	d.Flick("R", dRight, true, "")
+	d.Flick("R", dRight, false, "")
+	if got := rec.take(); got != "sub:cur,sub:cur,sub:cur,<S+RIGHT>,<S+RIGHT>,<S+RIGHT>,<RIGHT>" {
+		t.Fatalf("shift select: %s", got)
+	}
+	d.Flick("R", dDR, false, "") // 日本語へ
+	if got := rec.take(); got != "ime:true,sub:ja" {
+		t.Fatalf("back: %s", got)
+	}
+	d.Flick("R", dDR, false, "") // 数字へ → ↘↑ で矢印
+	d.Flick("R", dDR, false, "bendup")
+	if got := rec.take(); got != "ime:false,sub:num,ime:false,sub:cur" {
+		t.Fatalf("num to cur: %s", got)
 	}
 }

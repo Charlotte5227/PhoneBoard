@@ -36,8 +36,7 @@ class DirPad {
         float maxD;                  // 触れた点からの一番遠い距離（dp）
         float farX, farY;            // その点（px）
         long t0;
-        boolean seIn, bend;          // ↘ に入った / そこから左へ曲げた
-        float seX;                   // ↘ に入ってからの一番右（px）
+        int repDir = -1;             // 矢印画面: 押さえ続けている方向
         float len;                   // なぞった長さ（dp）
         boolean others, holder;      // 英字: 他の指が触れていた（=大文字）/ 大文字用に押さえている指
         int corner;                  // 曲げの起点にした方向（8=↖ 6=↙、0=なし）
@@ -95,6 +94,35 @@ class DirPad {
         if (f.rep != null) {
             handler.removeCallbacks(f.rep);
             f.rep = null;
+        }
+    }
+
+    /** 矢印画面: はじいた方向のまま押さえ続けたら、連続で矢印を送る */
+    private void startArrowRepeat(final F f) {
+        stopRepeat(f);
+        final int dir = f.repDir;
+        final String side = f.left ? "L" : "R";
+        f.rep = new Runnable() {
+            public void run() {
+                if (fs.get(f.id) != f || f.repDir != dir) return;
+                sendFlickRep(side, dir, f.repeated);
+                f.repeated = true;
+                handler.postDelayed(this, repeatIntervalMs);
+            }
+        };
+        handler.postDelayed(f.rep, repeatDelayMs);
+    }
+
+    private void sendFlickRep(String side, int dir, boolean rep) {
+        try {
+            JSONObject o = new JSONObject();
+            o.put("t", "df");
+            o.put("s", side);
+            o.put("n", dir);
+            o.put("z", 0);
+            if (rep) o.put("a", "rep");
+            out.send(o);
+        } catch (Exception ignored) {
         }
     }
 
@@ -159,10 +187,14 @@ class DirPad {
         // 角から指を離さずに曲げる:
         //   右の ↖（ん）から → 削除 / ↓ 確定 / ↑ Tab
         //   ↖ ↙ どちらの手でも ↙ から ↑ Shift / → Win / ↓ Ctrl（修飾キーの選択中だけ有効。判断はPC）
-        if (f.corner == 0 && !f.seIn && ((dir == 8 && !f.left) || dir == 6)) {
+        if (f.corner == 0 && (((dir == 8 || dir == 4) && !f.left) || dir == 6)) {
             f.corner = dir;
             f.ax = x;
             f.ay = y;
+            if (dir == 4) { // 切り替え口に入った
+                preview(4, null);
+                out.vibrate(8, 120);
+            }
         } else if (f.corner != 0) {
             float sx = x - f.px, sy = y - f.py;
             // 角の方向へ進んでいる間は基準点もついていく（曲げた後は固定）
@@ -175,6 +207,7 @@ class DirPad {
             if (Math.hypot(vx, vy) >= bendDp) {
                 int vd = dirOf(vx, vy);
                 if (f.corner == 8) k = vd == 3 ? "bs" : vd == 5 ? "enter" : vd == 1 ? "tab" : null;
+                else if (f.corner == 4) k = (vd == 7 || vd == 6) ? "bend" : vd == 1 ? "bendup" : null; // 英字 / 矢印
                 else k = vd == 1 ? "mshift" : vd == 3 ? "mwin" : vd == 5 ? "mctrl" : null;
             }
             if (k != null) f.ulFrozen = true;
@@ -184,28 +217,21 @@ class DirPad {
                 if ("bs".equals(k)) startRepeat(f);
                 else stopRepeat(f);
                 if (k != null) {
-                    previewBend(k, f.left ? "L" : "R");
+                    if (f.corner == 4) preview(4, k);
+                    else previewBend(k, f.left ? "L" : "R");
                     out.vibrate(20, 220);
                 } else {
                     out.vibrate(8, 120); // 戻した → 取り消し
                 }
             }
         }
-        // 右の親指: ↘（切り替え口）に入った → 音で知らせる。そこから左へ引いたら英字
-        if (!f.left) {
-            if (!f.seIn && f.corner == 0 && dir == 4) {
-                f.seIn = true;
-                f.seX = x;
-                preview(4, false);
-                out.vibrate(8, 120);
-            }
-            if (f.seIn) {
-                if (x > f.seX && !f.bend) f.seX = x;
-                if (!f.bend && (f.seX - x) / dens >= bendDp) {
-                    f.bend = true;
-                    preview(4, true);
-                    out.vibrate(15, 200);
-                }
+        // 矢印画面: はじいた先で押さえ続けると連続
+        if ("cur".equals(sub) && f.corner == 0) {
+            int ad = (dir == 1 || dir == 3 || dir == 5 || dir == 7) ? dir : -1;
+            if (ad != f.repDir) {
+                stopRepeat(f);
+                f.repDir = ad;
+                if (ad > 0) startArrowRepeat(f);
             }
         }
         f.px = x;
@@ -227,10 +253,7 @@ class DirPad {
         int dir;
         boolean lng = false;
         String kind = null;
-        if (f.bend) {
-            dir = 4;
-            kind = "bend";
-        } else if (f.ulKind != null) {
+        if (f.ulKind != null) {
             dir = f.corner;
             kind = f.ulKind;
         } else if (f.maxD < flickDp) {
@@ -301,13 +324,13 @@ class DirPad {
         }
     }
 
-    private void preview(int dir, boolean bend) {
+    private void preview(int dir, String bend) {
         try {
             JSONObject o = new JSONObject();
             o.put("t", "dp");
             o.put("s", "R");
             o.put("n", dir);
-            if (bend) o.put("b", "bend");
+            if (bend != null) o.put("b", bend);
             out.send(o);
         } catch (Exception ignored) {
         }
@@ -353,6 +376,8 @@ class DirPad {
     private static final String[] JA_R = {"あ", "う", "変換", "え", "切替", "お", "゛小", "い", "ん"};
     private static final String[] NUM_L = {"5", "2", "3", "6", "9", "8", "7", "4", "1"};
     private static final String[] NUM_R = {"0", ".", ":", "+", "切替", ",", "%", "-", "/"};
+    private static final String[] CUR_L = {"", "PgUp", "", "End", "", "PgDn", "", "Home", ""};
+    private static final String[] CUR_R = {"", "↑", "", "→", "切替", "↓", "", "←", "編集"};
     private static final float[][] OFF = {{0, 0}, {0, -1}, {0.75f, -0.75f}, {1, 0}, {0.75f, 0.75f}, {0, 1}, {-0.75f, 0.75f}, {-1, 0}, {-0.75f, -0.75f}};
 
     void draw(Canvas c, int w, int h) {
@@ -366,11 +391,11 @@ class DirPad {
             paint.setColor(Color.rgb(40, 40, 48));
             paint.setStrokeWidth(dens);
             c.drawLine(w / 2f, 12 * dens, w / 2f, h - 12 * dens, paint);
-            boolean ja = "ja".equals(sub);
+            boolean ja = "ja".equals(sub), cur = "cur".equals(sub);
             text.setTextSize(13 * dens);
-            c.drawText(ja ? "日本語　左：行　右：段" : "数字　左：1〜9　右：0と記号", w / 2f, 22 * dens, text);
-            rose(c, w * 0.25f, h * 0.55f, Math.min(w * 0.17f, h * 0.3f), ja ? JA_L : NUM_L);
-            rose(c, w * 0.75f, h * 0.55f, Math.min(w * 0.17f, h * 0.3f), ja ? JA_R : NUM_R);
+            c.drawText(ja ? "日本語　左：行　右：段" : cur ? "矢印　押さえ続けると連続　右↘：日本語へ" : "数字　左：1〜9　右：0と記号", w / 2f, 22 * dens, text);
+            rose(c, w * 0.25f, h * 0.55f, Math.min(w * 0.17f, h * 0.3f), ja ? JA_L : cur ? CUR_L : NUM_L);
+            rose(c, w * 0.75f, h * 0.55f, Math.min(w * 0.17f, h * 0.3f), ja ? JA_R : cur ? CUR_R : NUM_R);
         }
         // 触れている指の軌跡
         paint.setColor(Color.rgb(120, 110, 220));
